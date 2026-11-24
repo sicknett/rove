@@ -1,0 +1,9 @@
+/shell/target/
+/ui/node_modules/
+/ui/dist/
+/vendor/mpv/*.dll
+/dist/
+*.log
+/.claude/
+/ui/.env.local
+*.local
