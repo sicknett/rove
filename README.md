@@ -30,12 +30,13 @@ they are kept for a later install.
 ### Updates
 
 ROVE looks for a new release when it starts, and Settings → About has **Check for updates**.
-Updating downloads the new Setup from this repository's releases, checks it, closes ROVE,
-installs, and opens it again with everything you set up in place.
+In the current builds, which are not code-signed yet, the button opens the download page: close
+ROVE, run the Setup you download, and everything you set up stays in place.
 
-Each release is signed with a key that only the publisher holds, and the app refuses a download
-that key did not sign (`shell/src/update.rs`), so a tampered file cannot be installed even if the
-download location were compromised.
+Code-signed builds can install the update themselves (the `self-update` build option): the app
+downloads the Setup, checks it against a release signature made with a key only the publisher
+holds (`shell/src/update.rs`), installs and reopens. That path is off for unsigned builds because
+Windows Defender treats an unsigned program that fetches and runs an installer as malware.
 
 ## How it is put together
 

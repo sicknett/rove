@@ -22,7 +22,7 @@ const TRAILER_GIVE_UP_MS = 14000;
  * a title's art shows first, then its trailer fades in over it, the description steps aside and
  * the logo shrinks while it plays, and when the trailer ends the banner moves to the next title.
  */
-export function Hero({ items, onBackdrop }: { items: MetaPreview[]; onBackdrop?: (url: string | undefined) => void }) {
+export function Hero({ items }: { items: MetaPreview[] }) {
   const featured = useMemo(() => items.filter((i) => i.background || i.poster).slice(0, 8), [items]);
   const [index, setIndex] = useState(0);
   const [hovered, setHovered] = useState(false);
@@ -65,9 +65,10 @@ export function Hero({ items, onBackdrop }: { items: MetaPreview[]; onBackdrop?:
           key={m.id}
           meta={m}
           active={i === index % count}
+          // Only the title showing and its neighbours hold their big picture; the rest wait their turn.
+          near={count < 3 || [0, 1, count - 1].includes((i - (index % count) + count) % count)}
           live={live}
           hovered={hovered && active}
-          onBackdrop={onBackdrop}
           onTrailer={setTrailer}
           onTrailerEnd={() => count > 1 && setIndex((n) => (n + 1) % count)}
         />
@@ -189,15 +190,15 @@ function HeroTrailer({ id, name, onShown, onEnded }: { id: string; name: string;
 interface SlideProps {
   meta: MetaPreview;
   active: boolean;
+  near: boolean;
   /** Home is the screen in front and the banner is in view. */
   live: boolean;
   hovered: boolean;
-  onBackdrop?: (url: string | undefined) => void;
   onTrailer: (on: boolean) => void;
   onTrailerEnd: () => void;
 }
 
-function HeroSlide({ meta, active, live, hovered, onBackdrop, onTrailer, onTrailerEnd }: SlideProps) {
+function HeroSlide({ meta, active, near, live, hovered, onTrailer, onTrailerEnd }: SlideProps) {
   const type = asMediaType(meta.type);
   const tmdb = useTmdb(meta.type, active ? meta.id : undefined);
   const trailersOn = useSettings((s) => s.settings.appearance.heroTrailers);
@@ -238,10 +239,6 @@ function HeroSlide({ meta, active, live, hovered, onBackdrop, onTrailer, onTrail
 
   const background = tmdb.data?.backdrop ?? meta.background ?? meta.poster;
   const logo = meta.logo ?? tmdb.data?.logo;
-  // Home colours itself from the picture that is showing.
-  useEffect(() => {
-    if (active) onBackdrop?.(background);
-  }, [active, background, onBackdrop]);
   const rating = Number(meta.imdbRating);
   const year = meta.releaseInfo ?? (meta.year ? String(meta.year) : undefined);
   const genres = (meta.genres ?? tmdb.data?.details?.genres?.map((g) => g.name) ?? []).slice(0, 3);
@@ -250,7 +247,7 @@ function HeroSlide({ meta, active, live, hovered, onBackdrop, onTrailer, onTrail
 
   return (
     <div className={`hero__slide ${active ? 'is-active' : ''} ${playing ? 'is-playing' : ''}`} aria-hidden={!active} inert={!active}>
-      <Img src={background} alt="" className="hero__backdrop" loading="eager" />
+      {near && <Img src={background} alt="" className="hero__backdrop" loading="eager" />}
       {active && showTrailer && trailerId && (
         <HeroTrailer
           id={trailerId}

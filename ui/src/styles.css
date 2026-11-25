@@ -263,10 +263,7 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 
 /* ============ App shell ============ */
 .shell { position: relative; height: 100%; }
-/* The bar's shading is the page's colour: the usual dark, or Home's colour while Home takes one
-   from its banner (set on the bar itself, and registered so it fades with the page). */
-@property --ambient-page { syntax: '<color>'; inherits: true; initial-value: #0b0c0d; }
-.sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; align-items: center; padding: 14px 0 18px; background: linear-gradient(to right, color-mix(in srgb, var(--ambient-page) 92%, transparent), color-mix(in srgb, var(--ambient-page) 55%, transparent) 70%, transparent); transition: --ambient-page 1400ms linear; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; align-items: center; padding: 14px 0 18px; background: linear-gradient(to right, rgba(11, 12, 13, 0.92), rgba(11, 12, 13, 0.55) 70%, rgba(11, 12, 13, 0)); }
 .sidebar__mark { width: 26px; margin: 2px 0 26px; opacity: 0.95; }
 .sidebar__items { display: grid; gap: 6px; }
 .sidebar__item { width: 64px; display: grid; justify-items: center; gap: 4px; padding: 9px 0 8px; border-radius: 14px; color: var(--ink-3); transition: color 150ms, background-color 150ms; }
@@ -286,7 +283,7 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 /* Navigation across the top instead of down the side (Settings → Appearance). The same bar, laid
    out in a row inside the title bar's strip; the page gets its full width back. */
 .shell--nav-top { --sidebar-w: 0px; --titlebar-h: 58px; }
-.shell--nav-top .sidebar { inset: 0 0 auto 0; width: auto; height: var(--titlebar-h); z-index: 61; flex-direction: row; align-items: center; padding: 0 152px 0 20px; background: linear-gradient(to bottom, color-mix(in srgb, var(--ambient-page) 90%, transparent), color-mix(in srgb, var(--ambient-page) 50%, transparent) 70%, transparent); pointer-events: none; }
+.shell--nav-top .sidebar { inset: 0 0 auto 0; width: auto; height: var(--titlebar-h); z-index: 61; flex-direction: row; align-items: center; padding: 0 152px 0 20px; background: linear-gradient(to bottom, rgba(11, 12, 13, 0.9), rgba(11, 12, 13, 0.5) 70%, rgba(11, 12, 13, 0)); pointer-events: none; }
 .shell--nav-top .sidebar > * { pointer-events: auto; }
 .shell--nav-top .sidebar__mark { width: 24px; margin: 0; }
 /* Room after the mark for the title bar's back and forward arrows, which sit beneath this bar. */
@@ -498,20 +495,11 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .hero__dot-fill { position: absolute; inset: 0; background: var(--ink); transform-origin: left; animation: dot-fill linear both; }
 @keyframes dot-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .home { padding-bottom: 64px; min-height: 100%; }
-/* Home takes its colour from the banner's picture: two flat sheets pinned to the window that
-   cross-fade (see AmbientLayer). Nothing is painted into the scrolling page and only opacity
-   changes, so there is no gradient to band and no redraw to tear. The banner's picture always
-   fades out at its bottom through a mask, into whatever is behind it (the colour, or the page). */
-.home { position: relative; }
-.home__ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
-.home__tint { position: absolute; inset: 0; opacity: 0; will-change: opacity; transition: opacity 1400ms linear; }
-.home__tint.is-on { opacity: 0.5; }
-.home > .hero, .home > .home__rows { z-index: 1; }
+/* The banner's picture fades out at its bottom through a mask, into the page behind it. */
 .hero__backdrop, .hero__trailer, .hero__shade { -webkit-mask-image: linear-gradient(to bottom, #000 56%, transparent 97%); mask-image: linear-gradient(to bottom, #000 56%, transparent 97%); }
 /* The trailer's frame is taller than the banner (140 %, to crop the player's edges): its mask is
    sized to the banner itself, or the fade would end below the banner and leave a hard edge. */
 .hero__trailer { -webkit-mask-size: 100% 71.43%; mask-size: 100% 71.43%; -webkit-mask-position: center; mask-position: center; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
-.reduce-motion .home__tint { transition: none; }
 .home__rows { position: relative; padding-top: calc(var(--titlebar-h) + 12px); }
 .home__rows--under-hero { margin-top: -96px; padding-top: 0; }
 .home-empty { display: flex; align-items: center; justify-content: space-between; gap: 32px; flex-wrap: wrap; margin: 18px var(--gutter) 8px calc(var(--sidebar-w) + var(--gutter) - 12px); padding: 26px 28px; border-radius: var(--radius-lg); background: linear-gradient(120deg, var(--accent-soft), rgba(255, 255, 255, 0.03)); animation: rise 400ms var(--ease-out) both; }

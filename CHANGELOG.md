@@ -5,6 +5,31 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+## 0.2.2 — 2026-11-25
+
+**Fixed**
+- Windows Defender quarantined ROVE after it updated itself (Trojan:Win32/Bearfoos.A!ml, a
+  machine-learning verdict): an unsigned program that downloads an installer and runs it looks
+  like a dropper. Builds that are not code-signed no longer do that. The Update button still
+  finds new versions, and now opens the download page; you run the Setup, and everything you set
+  up stays. Installing updates from inside the app is a build option (`self-update`) kept for
+  code-signed builds.
+- Releases 0.2.0 and 0.2.1 were withdrawn for this reason.
+
+**Removed**
+- Home no longer takes its colour from the banner: the colour did not always follow the banner,
+  and the plain dark page is back.
+
+**Faster**
+- The banner loads only the picture that is showing and its neighbours, not all eight at once.
+- Wide cards (Continue Watching) load pictures sized for a card instead of banner-sized ones.
+- The Claude client library loads when Claude is first asked something, not at start: the app's
+  start-up script is about a third smaller.
+
+**Checked**
+- Defender scans the program and the Setup clean; the installed copy ran on a test data folder
+  without being flagged.
+
 ## 0.2.1 — 2026-11-25
 
 **Fixed**
@@ -48,7 +73,7 @@ The first release that updates itself. Everything under "Audit and repair" below
   start by itself or only under the pointer, has a sound button (quiet by default), and never
   shows YouTube's own controls. Settings → Home layout also chooses what the banner features:
   the rows, Continue Watching, or your watchlist.
-- **Home takes its colour from the banner**, carried down the page and into the navigation bar.
+- **Home takes its colour from the banner** (removed again in 0.2.2).
 - **Navigation on the left or across the top** (Settings → Appearance).
 - **Player:** button names show at once on hover; Speed, Picture, Picture in picture, Playback
   info and Keyboard shortcuts moved into one More menu; the episode list has a season picker,

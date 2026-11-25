@@ -1,4 +1,3 @@
-import { useAmbientPage } from '../screens/home/ambient';
 import { useUpdate } from '../lib/update';
 import { useSettings } from '../state/settings';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
@@ -26,7 +25,6 @@ const NAV: { route: Route; label: string; icon: typeof House; key: string }[] = 
 ];
 
 function Sidebar() {
-  const ambient = useAmbientPage((s) => s.color);
   const updateReady = useUpdate((s) => s.status === 'available');
   const current = useNav((s) => s.stack[s.index].route.name);
   const goTab = useNav((s) => s.goTab);
@@ -34,7 +32,7 @@ function Sidebar() {
   const signOut = useProfiles((s) => s.signOut);
   const syncState = useTracker((s) => s.state);
   return (
-    <nav className="sidebar" aria-label="Main" style={ambient ? ({ '--ambient-page': `color-mix(in srgb, ${ambient} 50%, #0b0c0d)` } as React.CSSProperties) : undefined}>
+    <nav className="sidebar" aria-label="Main">
       <img src={markUrl} alt="ROVE" className="sidebar__mark" draggable={false} />
       <div className="sidebar__items">
         {NAV.map((n) => (

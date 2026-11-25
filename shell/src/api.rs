@@ -18,6 +18,7 @@ use wry::http::{Request, Response};
 pub struct Api {
     store_dir: PathBuf,
     secret_dir: PathBuf,
+    #[cfg_attr(not(feature = "self-update"), allow(dead_code))]
     data_dir: PathBuf,
     agent: ureq::Agent,
 }
@@ -103,6 +104,7 @@ impl Api {
             ("GET", ("secret", name)) => self.read_doc(&self.secret_dir, name, true),
             ("PUT", ("secret", name)) => self.write_doc(&self.secret_dir, name, request.body(), true),
             ("DELETE", ("secret", name)) => self.delete_doc(&self.secret_dir, name, true),
+            #[cfg(feature = "self-update")]
             ("POST", ("update", "download")) => match serde_json::from_slice::<crate::update::Wanted>(request.body()) {
                 Ok(wanted) => match crate::update::download(&self.data_dir, &self.agent, &wanted) {
                     Ok(()) => json_response(200, &json!({ "ok": true })),
@@ -110,10 +112,15 @@ impl Api {
                 },
                 Err(_) => text_response(400, "bad request"),
             },
+            #[cfg(feature = "self-update")]
             ("GET", ("update", "progress")) => {
                 let (received, total, ready) = crate::update::progress();
-                json_response(200, &json!({ "received": received, "total": total, "ready": ready }))
+                json_response(200, &json!({ "selfUpdate": true, "received": received, "total": total, "ready": ready }))
             }
+            // This build does not install updates itself (see update.rs): the page opens the
+            // download page instead.
+            #[cfg(not(feature = "self-update"))]
+            ("GET", ("update", "progress")) => json_response(200, &json!({ "selfUpdate": crate::update::SELF_UPDATE })),
             _ => text_response(404, "unknown endpoint"),
         }
     }

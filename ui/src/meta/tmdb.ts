@@ -147,6 +147,15 @@ export async function images(kind: TmdbKind, id: number): Promise<{ logos?: Tmdb
 }
 
 /** The best English (or language-free) logo, as a PNG URL. */
+/**
+ * The same TMDB picture at another width. Cards ask for one near the size they are drawn at: a
+ * banner-sized picture in a card costs several times the download, memory and decode time.
+ * Pictures from anywhere else come back unchanged.
+ */
+export function tmdbResized(url: string | null | undefined, size: 'w342' | 'w500' | 'w780' | 'w1280'): string | undefined {
+  return url ? url.replace(/(image\.tmdb\.org\/t\/p\/)(?:original|w1280)\//, `$1${size}/`) : undefined;
+}
+
 export function bestLogo(logos: TmdbImage[] | undefined, size: 'w500' | 'original' = 'w500'): string | undefined {
   if (!logos?.length) return undefined;
   const ranked = [...logos].sort((a, b) => {

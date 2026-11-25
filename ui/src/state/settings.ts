@@ -19,8 +19,6 @@ export interface Settings {
     heroTrailerStart: 'auto' | 'hover';
     /** What the banner features: the rows (starred ones first), or the user's own titles. */
     heroSource: 'auto' | 'continue' | 'watchlist';
-    /** Home takes its colour from the banner's picture. */
-    ambientHome: boolean;
     reduceMotion: boolean;
     /** Where the main navigation sits. */
     navPosition: 'left' | 'top';
@@ -83,7 +81,6 @@ export const DEFAULT_SETTINGS: Settings = {
     heroTrailers: true,
     heroTrailerStart: 'auto',
     heroSource: 'auto',
-    ambientHome: true,
     reduceMotion: false,
     navPosition: 'left',
     landscapeContinueWatching: true,

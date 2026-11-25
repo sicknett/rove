@@ -164,13 +164,15 @@ const megabytes = (n: number) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)}
 
 /** Check for a newer release and install it without leaving the app. */
 function UpdateRow() {
-  const { status, release, error, received, total, checkedAt } = useUpdate();
+  const { status, release, error, received, total, checkedAt, selfUpdate } = useUpdate();
   const check = useUpdate((s) => s.check);
   const install = useUpdate((s) => s.install);
   const busy = status === 'checking' || status === 'downloading' || status === 'installing';
   const hint =
     status === 'available' && release
-      ? `Version ${release.version} is ready to install. ROVE closes, updates and opens again; nothing you set up changes.`
+      ? selfUpdate
+        ? `Version ${release.version} is ready to install. ROVE closes, updates and opens again; nothing you set up changes.`
+        : `Version ${release.version} is out. This opens the download page: close ROVE, run the Setup you download, and everything you set up stays.`
       : status === 'downloading'
         ? total > 0
           ? `Downloading ${megabytes(received)} of ${megabytes(total)}`
@@ -189,7 +191,7 @@ function UpdateRow() {
       <SettingRow label="Updates" hint={hint}>
         {status === 'available' || status === 'downloading' || status === 'installing' ? (
           <Button variant="primary" icon={<Download size={16} />} disabled={busy} onClick={() => void install()}>
-            {status === 'available' ? `Update to ${release?.version}` : 'Updating'}
+            {status === 'available' ? (selfUpdate ? `Update to ${release?.version}` : `Get ${release?.version}`) : 'Updating'}
           </Button>
         ) : (
           <Button variant="secondary" icon={<RefreshCw size={16} />} disabled={busy} onClick={() => void check()}>

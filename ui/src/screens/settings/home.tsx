@@ -87,9 +87,6 @@ export function HomeSection() {
             />
           </SettingRow>
         )}
-        <SettingRow label="Colour Home from the banner" hint="The page takes its colour from the picture that is showing">
-          <Switch checked={appearance.ambientHome} onChange={(v) => set('appearance', { ambientHome: v })} label="Colour Home from the banner" />
-        </SettingRow>
         <SettingRow label="Wide Continue Watching cards" hint="Episode stills instead of posters">
           <Switch checked={appearance.landscapeContinueWatching} onChange={(v) => set('appearance', { landscapeContinueWatching: v })} label="Wide Continue Watching cards" />
         </SettingRow>

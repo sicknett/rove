@@ -7,7 +7,7 @@ import { Group, SettingRow } from '../screens/settings/parts';
 import { useKeys } from '../state/keys';
 import { Button, Segmented, Select, TextField } from '../ui/controls';
 import { toast } from '../ui/toast';
-import { CLAUDE_DEFAULT_MODEL, CLAUDE_MODELS } from './claude';
+import { CLAUDE_DEFAULT_MODEL, CLAUDE_MODELS } from './claudeModels';
 import { GEMINI_DEFAULT_MODEL, geminiModel } from './gemini';
 import { assistantFor, assistantName } from './index';
 import { OPENAI_DEFAULT_BASE_URL, OPENAI_DEFAULT_MODEL, baseUrlProblem, openAiBaseUrl } from './openai';

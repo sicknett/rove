@@ -691,6 +691,7 @@ fn main() {
     let mut remaximize = false;
     let mut last_state = Value::Null;
     let mut pip_restore: Option<PipRestore> = None;
+    #[cfg(feature = "self-update")]
     let mut pending_update: Option<PathBuf> = None;
     let mut placement = saved.unwrap_or(Placement { x: 0, y: 0, width: 1440.0, height: 900.0, maximized: false });
     // Closing asks the page to save first; it gets two seconds.
@@ -744,6 +745,7 @@ fn main() {
             }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => begin_close = true,
             Event::UserEvent(UserEvent::CloseReady) => *control_flow = ControlFlow::Exit,
+            #[cfg(feature = "self-update")]
             Event::UserEvent(UserEvent::InstallUpdate) => match update::ready() {
                 // Everything is saved the usual way first; Setup starts as the last thing on the way out.
                 Some(setup) => {
@@ -752,6 +754,8 @@ fn main() {
                 }
                 None => log::warn!("update: nothing downloaded to install"),
             },
+            #[cfg(not(feature = "self-update"))]
+            Event::UserEvent(UserEvent::InstallUpdate) => log::warn!("update: this build does not install updates itself"),
             Event::UserEvent(UserEvent::NowPlaying(np)) => {
                 if let Some(c) = &controls {
                     c.update(&np);
@@ -870,6 +874,7 @@ fn main() {
             Event::LoopDestroyed => {
                 log::info!("closing");
                 save_placement(&dir, &placement);
+                #[cfg(feature = "self-update")]
                 if let Some(setup) = pending_update.take() {
                     update::run_setup(&setup);
                 }

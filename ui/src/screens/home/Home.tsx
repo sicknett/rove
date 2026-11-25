@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Compass, EyeOff, FolderOpen, FolderPen, Pencil, Puzzle, SlidersHorizontal, Trash2, Upload } from 'lucide-react';
 import { openContextMenu } from '../../ui/contextmenu';
@@ -23,8 +23,6 @@ import { Button, Empty, type MenuItem } from '../../ui/controls';
 import { Img } from '../../ui/Img';
 import { playContinue } from '../../player/launch';
 import { Hero } from './Hero';
-import { useAmbient } from './ambient';
-import { AmbientLayer } from './AmbientLayer';
 import { usePersonalHeroItems } from './heroSource';
 import { isServerAddon } from '../../servers';
 import { useCatalogSources } from '../../servers/useSources';
@@ -217,11 +215,7 @@ export function Home() {
   // The user's own pick for the banner (Continue Watching or the watchlist) wins over the rows.
   const personalHero = usePersonalHeroItems();
   const bannerItems = personalHero ?? heroItems;
-  // The page takes its colour from the banner's picture.
-  const ambientOn = useSettings((s) => s.settings.appearance.ambientHome);
-  const [backdrop, setBackdrop] = useState<string | undefined>(undefined);
   const showBanner = heroOn && heroSetting && bannerItems.length > 0;
-  const ambient = useAmbient(backdrop, ambientOn && showBanner);
 
   // Only on a Home with nothing else on it: a media server's rows or collections are a Home too.
   if (loaded && addonCount === 0 && !hasRows && !addonsUnreadable) {
@@ -235,10 +229,8 @@ export function Home() {
   }
 
   return (
-    <div className={`home${ambient ? ' home--ambient' : ''}`}>
-      {/* The banner's colour, pinned behind the page. */}
-      {ambientOn && showBanner && <AmbientLayer color={ambient} />}
-      {showBanner && <Hero items={bannerItems} onBackdrop={setBackdrop} />}
+    <div className="home">
+      {showBanner && <Hero items={bannerItems} />}
       <div ref={rowsEl} className={`home__rows ${showBanner ? 'home__rows--under-hero' : ''}`}>
         {addonsUnreadable && <AddonsUnreadable />}
         {showBuildHome && <NoHomeRows reason={anyRowOff ? 'off' : keptOff ? 'kept-off' : 'none'} />}

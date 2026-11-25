@@ -1,3 +1,4 @@
+import { tmdbResized } from '../meta/tmdb';
 import { memo } from 'react';
 import { Check, Play, Star } from 'lucide-react';
 import { Img } from '../ui/Img';
@@ -107,7 +108,7 @@ export const WideCard = memo(function WideCard({ title, image, subtitle, progres
   return (
     <div className="card card--wide" onContextMenu={(e) => openContextMenu(e, titleMenu(title, { onPlay, continueKey, season, episode }))}>
       <button className="card__frame" onClick={onPlay} aria-label={`Play ${title.name ?? ''} ${subtitle ?? ''}`}>
-        <Img src={image ?? title.background ?? title.poster} alt="" className="card__img" fallback={<Monogram name={title.name} />} />
+        <Img src={tmdbResized(image ?? title.background ?? title.poster, 'w780')} alt="" className="card__img" fallback={<Monogram name={title.name} />} />
         <span className="card__scrim" aria-hidden />
         <span className="card__wide-text">
           {title.logo ? <Img src={title.logo} alt={title.name} className="card__logo" fallback={<span className="card__wide-name">{title.name}</span>} /> : <span className="card__wide-name">{title.name}</span>}

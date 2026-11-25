@@ -37,7 +37,6 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Featured banner: rotating titles with backdrop, logo art, rating, year, genres, overview, Play, Details, Watchlist
 - [x] Banner trailers the way streaming services do it: fades in over the art, text steps aside, moves on when it ends; starts by itself or on hover; sound button; no YouTube controls
 - [x] Banner source: the rows, Continue Watching or the watchlist
-- [x] Home takes its colour from the banner, carried into the navigation bar
 - [x] Continue Watching: resume points plus the next aired episode, newest first, wide cards with logo art
 - [~] Remove from Continue Watching (with undo); mark watched from the card menu
 - [x] A row per catalog, loaded as it scrolls into view, paging further on scroll
@@ -139,4 +138,5 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Portable build with Start menu and Desktop shortcuts
 - [x] Installer: per-user Setup.exe (no admin), Start menu and optional desktop shortcut, Apps list uninstaller, WebView2 check, updates in place keeping your data, uninstall asks before removing data (install, upgrade and uninstall checked silently)
 - [ ] Code signing (no SmartScreen warning)
-- [~] Updates from inside the app: check at start and in Settings → About, signed download, install and reopen (signature checks unit tested; the full round trip is checked against the first published release)
+- [x] Update check at start and in Settings → About; the button opens the download page (unsigned builds)
+- [~] Installing the update from inside the app (signed download, install, reopen): works end to end, but only safe in code-signed builds, so it is a build option that is off for now

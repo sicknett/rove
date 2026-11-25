@@ -1,6 +1,9 @@
-// In-app updates. The page finds out whether a newer release exists and shows it; the shell
-// downloads the Setup, checks it against the release signature, and runs it as the app closes
-// (shell/src/update.rs). The page never handles the file itself.
+// In-app updates. The page finds out whether a newer release exists and shows it. What "update"
+// then does depends on the build (shell/src/update.rs):
+// - a code-signed build installs it itself: the shell downloads the Setup, checks it against the
+//   release signature, and runs it as the app closes;
+// - any other build opens the download page, and the user runs the Setup. (An unsigned program
+//   that fetches and starts an installer is quarantined by Windows Defender as a dropper.)
 
 import { create } from 'zustand';
 import { inShell, send } from '../bridge';
@@ -9,6 +12,8 @@ import { nativeFetch } from './native';
 /** Where releases are published. The shell only accepts downloads from this repository's releases. */
 export const RELEASES_REPO = 'sicknett/rove';
 const FEED = `https://github.com/${RELEASES_REPO}/releases/latest/download/latest.json`;
+/** Where a person downloads the newest Setup. */
+export const DOWNLOAD_PAGE = `https://github.com/${RELEASES_REPO}/releases/latest`;
 
 export interface Release {
   version: string;
@@ -64,6 +69,8 @@ interface UpdateState {
   checkedAt: number | null;
   received: number;
   total: number;
+  /** This build installs updates itself; otherwise the Update button opens the download page. */
+  selfUpdate: boolean;
   /** Looks for a newer release. Quiet checks (at start) keep errors to themselves. */
   check: (quiet?: boolean) => Promise<void>;
   /** Downloads and checks the Setup, then installs it and reopens ROVE. */
@@ -78,11 +85,18 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   checkedAt: null,
   received: 0,
   total: 0,
+  selfUpdate: false,
 
   async check(quiet = false) {
     const s = get().status;
     if (s === 'checking' || s === 'downloading' || s === 'installing') return;
     if (!quiet) set({ status: 'checking', error: null });
+    if (inShell) {
+      void fetch('/__api/update/progress')
+        .then((r) => r.json() as Promise<{ selfUpdate?: boolean }>)
+        .then((p) => set({ selfUpdate: !!p.selfUpdate }))
+        .catch(() => undefined);
+    }
     try {
       const release = await latestRelease();
       if (release && isNewer(release.version, get().current)) set({ status: 'available', release, error: null, checkedAt: Date.now() });
@@ -93,9 +107,11 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   },
 
   async install() {
-    const { release, status } = get();
+    const { release, status, selfUpdate } = get();
     if (!release || status === 'downloading' || status === 'installing') return;
     if (!inShell) return set({ status: 'error', error: 'Updates install from the ROVE app, not from a browser.' });
+    // The user downloads and runs the Setup; it installs over this copy and keeps everything.
+    if (!selfUpdate) return send({ t: 'open-external', url: DOWNLOAD_PAGE });
     set({ status: 'downloading', error: null, received: 0, total: 0 });
     const poll = window.setInterval(() => {
       void fetch('/__api/update/progress')

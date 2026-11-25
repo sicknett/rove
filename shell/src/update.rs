@@ -1,12 +1,23 @@
-//! In-app updates: downloads a newer Setup from ROVE's releases, checks it, and hands it to the
-//! app to run on the way out.
+//! In-app updates.
 //!
+//! With the `self-update` feature (code-signed builds only, see Cargo.toml) this module downloads
+//! a newer Setup from ROVE's releases, checks it, and hands it to the app to run on the way out.
 //! Nothing downloaded is trusted because of where it came from. The page says which version it
 //! wants; this module only accepts a file from the releases of [`REPO`], whose SHA-256 matches and
 //! whose (version, hash) pair carries a signature made with the release key. The matching public
-//! key is below; the private key never leaves the publisher's PC. A compromised download host can
-//! therefore not make ROVE run something else.
+//! key is below; the private key never leaves the publisher's PC.
+//!
+//! Without the feature nothing here downloads or starts anything: the page is told so and sends
+//! the user to the download page instead.
 
+/// Whether this build installs updates itself.
+pub const SELF_UPDATE: bool = cfg!(feature = "self-update");
+
+#[cfg(feature = "self-update")]
+pub use on::*;
+
+#[cfg(feature = "self-update")]
+mod on {
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -207,4 +218,6 @@ mod tests {
         assert!(!signature_ok("zz", "0.2.0", &sha, &"00".repeat(64)));
         assert!(!signature_ok(RELEASE_KEY, "0.2.0", &sha, &"00".repeat(64)));
     }
+}
+
 }

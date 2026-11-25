@@ -6,13 +6,7 @@ import { buildPrompt, parseSuggestions, SUGGESTIONS_SCHEMA } from './prompt';
 import { shellFetch, TIMEOUT_MS } from './transport';
 import { AiError, aborted, type AiSettings, type Assistant } from './types';
 
-export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5';
-
-export const CLAUDE_MODELS = [
-  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5', detail: 'The best picks' },
-  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', detail: 'Half the price of Opus' },
-  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', detail: 'Fastest, and a fraction of the price' },
-];
+export { CLAUDE_DEFAULT_MODEL, CLAUDE_MODELS } from './claudeModels';
 
 /**
  * Models whose safety classifiers Anthropic can back up with another model: when one of these
