@@ -1,0 +1,78 @@
+# Builds ROVE's installer from this repository on GitHub's own machines, so every released
+# binary can be traced to a commit. Code signing (when configured) takes this build's output.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+    branches: [ci]
+
+permissions:
+  contents: read
+
+env:
+  MPV_URL: https://github.com/sicknett/rove/releases/download/deps-mpv-0.40.0-465/libmpv-2.dll
+  MPV_SHA256: 07c68bb211f23a218ded0a36eb12207dc3aeb44e5318ffca6ce9dcc7c3173906
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            shell/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('shell/Cargo.lock') }}
+
+      # The player library is an unmodified upstream build, pinned by hash.
+      - name: libmpv
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor/mpv | Out-Null
+          Invoke-WebRequest $env:MPV_URL -OutFile vendor/mpv/libmpv-2.dll
+          $hash = (Get-FileHash vendor/mpv/libmpv-2.dll -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:MPV_SHA256) { throw "libmpv-2.dll does not match its pinned hash ($hash)" }
+
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Page dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Tests
+        shell: pwsh
+        run: |
+          Push-Location ui; npx tsc --noEmit -p .; if ($LASTEXITCODE) { throw 'typecheck failed' }; npx vitest run; if ($LASTEXITCODE) { throw 'page tests failed' }; Pop-Location
+          Push-Location shell; cargo test --release; if ($LASTEXITCODE) { throw 'shell tests failed' }; Pop-Location
+
+      - name: Installer
+        shell: powershell
+        env:
+          VITE_TMDB_API_KEY: ${{ secrets.VITE_TMDB_API_KEY }}
+          VITE_TRAKT_CLIENT_ID: ${{ secrets.VITE_TRAKT_CLIENT_ID }}
+        run: tools\make-installer.ps1
+
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: ROVE-Setup
+          path: dist/ROVE-Setup-*.exe
+          if-no-files-found: error
