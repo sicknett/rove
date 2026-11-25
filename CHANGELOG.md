@@ -5,7 +5,19 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
-## 0.2.0 â€” 2026-11-25
+## 0.2.1 — 2026-11-25
+
+**Fixed**
+- Updating from inside the app did not install: the installer tried to restart itself quietly
+  and Windows refused. An update now runs the installer in plain view with every question
+  answered for you: a short progress window, then ROVE reopens.
+- The player's More menu is wide enough for its labels.
+
+**Checked**
+- An installed 0.2.0 on a test data folder found this release, downloaded and verified it,
+  installed it and reopened as 0.2.1.
+
+## 0.2.0 — 2026-11-25
 
 The first release that updates itself. Everything under "Audit and repair" below is part of it.
 
@@ -13,31 +25,31 @@ The first release that updates itself. Everything under "Audit and repair" below
 
 **Added**
 - **Rows made for you.** Home builds streaming-service style rows from your own history, with no
-  account and no key to enter: Top picks for you, Because you watched â€¦, Trending this week,
+  account and no key to enter: Top picks for you, Because you watched …, Trending this week,
   numbered Top 10 movies and shows, New releases you might like, rows for your strongest genres,
   Hidden gems and From your watchlist. Titles you have watched, are watching or marked "Not
-  interested" are left out, and one title does not repeat across rows. One switch in Settings â†’
+  interested" are left out, and one title does not repeat across rows. One switch in Settings →
   Home layout turns them all off.
-- **Lists from Trakt, MDBList and your media servers.** "Import lists" (Library â†’ Collections,
-  Settings â†’ Home layout, and inside a collection's editor) adds your lists, liked, popular and
+- **Lists from Trakt, MDBList and your media servers.** "Import lists" (Library → Collections,
+  Settings → Home layout, and inside a collection's editor) adds your lists, liked, popular and
   searched lists, or a pasted link, as rows on Home or as folders in a collection. Server
   collections and playlists count as lists.
 - **The built-in Home's Trakt folders work.** Kaptain's Collection ships with 326 Trakt-list
   folders that could not load before; they do now. Folders and collections an earlier build
   removed for that reason are put back once, without touching anything you made.
-- **AI assistant** (Settings â†’ Accounts) with your own key: Claude, Gemini, or any
+- **AI assistant** (Settings → Accounts) with your own key: Claude, Gemini, or any
   OpenAI-compatible service. "Ask" in Search takes a request in plain words and shows real
   titles with a one-line reason each; a "For you" row on Home refreshes at most once a day.
   Nothing is sent unless you connect one.
-- **Update button.** ROVE looks for a newer release at start and in Settings â†’ About; updating
+- **Update button.** ROVE looks for a newer release at start and in Settings → About; updating
   downloads the Setup, checks it against the release signature, installs and reopens ROVE.
 - **Banner like a streaming service's.** A title's trailer fades in over its art, the description
   steps aside and the logo shrinks while it plays, and the banner moves on when it ends. It can
   start by itself or only under the pointer, has a sound button (quiet by default), and never
-  shows YouTube's own controls. Settings â†’ Home layout also chooses what the banner features:
+  shows YouTube's own controls. Settings → Home layout also chooses what the banner features:
   the rows, Continue Watching, or your watchlist.
 - **Home takes its colour from the banner**, carried down the page and into the navigation bar.
-- **Navigation on the left or across the top** (Settings â†’ Appearance).
+- **Navigation on the left or across the top** (Settings → Appearance).
 - **Player:** button names show at once on hover; Speed, Picture, Picture in picture, Playback
   info and Keyboard shortcuts moved into one More menu; the episode list has a season picker,
   opens on the episode that is playing and shows each episode's description. The title page uses
@@ -72,7 +84,7 @@ The first release that updates itself. Everything under "Audit and repair" below
   only an update marker and the installer makes itself quiet. Unsigned builds can still be
   flagged by such checks; code signing is the lasting answer.
 
-### 2026-11-25 â€” Audit and repair
+### 2026-11-25 — Audit and repair
 
 The whole app was read for defects and the findings were worked through. The lists, with the
 state of every item, are in `docs/audit/` (player, tracking, and everything else): 96 fixed,
@@ -100,7 +112,7 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
 
 **Fixed: Continue Watching and tracking**
 - Continue Watching was missing from Home when collections were pinned (they were forced above
-  every row). Home now follows the order in Settings â†’ Home layout exactly.
+  every row). Home now follows the order in Settings → Home layout exactly.
 - One id per title. History pulled from a tracker was stored under `tmdb:` ids because a failed
   id lookup was remembered forever; "next episode" cards, names, art and the title page's ticks
   and Resume button then did not line up. Lookups are retried, existing entries move to the
@@ -130,8 +142,8 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
 - A saved file that exists but cannot be read is no longer replaced by an empty one.
 
 **Added**
-- A â‹¯ menu on every Home row (also on right-click of its header): Move up, Move down, Hide from
-  Home, Edit folders, Home layout. Settings â†’ Home layout has an Edit folders button per
+- A ⋯ menu on every Home row (also on right-click of its header): Move up, Move down, Hide from
+  Home, Edit folders, Home layout. Settings → Home layout has an Edit folders button per
   collection.
 - Scroll bars are hidden everywhere.
 
@@ -147,12 +159,12 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
 - Not checked: a real session with stream addons and a tracker account (sign-ins are not copied
   into test copies), real media servers, subtitle shadow style, Plex address recovery.
 
-### 2026-11-24 â€” Windows installer
+### 2026-11-24 — Windows installer
 
 **Added**
 - `ROVE-Setup-<version>.exe` (about 36 MB), built by `tools\make-installer.ps1` with Inno Setup.
   Installs for the current Windows account without an administrator prompt, adds Start menu and
-  optional desktop shortcuts, registers an uninstaller in Settings â†’ Apps, and checks for
+  optional desktop shortcuts, registers an uninstaller in Settings → Apps, and checks for
   WebView2 first. Installing over an existing copy updates it in place; your data in
   `%LOCALAPPDATA%\ROVE` is kept, and uninstalling asks before removing it.
 - ROVE holds a named lock while it runs so Setup can tell it is open and ask you to close it
@@ -167,15 +179,15 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
   clicked through here).
 - Not signed: Windows SmartScreen warns on first run.
 
-### 2026-11-24 â€” Media servers, tracker choice, collections for everyone, smooth scrolling
+### 2026-11-24 — Media servers, tracker choice, collections for everyone, smooth scrolling
 
 | Media servers | Accounts |
 |---|---|
-| ![Settings Â· Media servers](docs/screenshots/settings-servers.jpg) | ![Settings Â· Accounts](docs/screenshots/settings-accounts.jpg) |
+| ![Settings · Media servers](docs/screenshots/settings-servers.jpg) | ![Settings · Accounts](docs/screenshots/settings-accounts.jpg) |
 | ![Home collections](docs/screenshots/home-collections.jpg) | ![Collection editor](docs/screenshots/collection-editor.jpg) |
 
 **Added**
-- Media servers (Settings â†’ Media servers): Jellyfin, Emby, Silo (which speaks Jellyfin's API)
+- Media servers (Settings → Media servers): Jellyfin, Emby, Silo (which speaks Jellyfin's API)
   and Plex. Jellyfin, Emby and Silo sign in with a username and password, or Quick Connect where
   the server has it on; Plex signs in through plex.tv in the browser and lists the account's
   servers, and ROVE picks the address that answers (local first, relay last).
@@ -185,7 +197,7 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
   Continue Watching entry, one tracker history. Titles only on the server open from the server.
 - Playback from a server is direct play of the original file, and the server is told about
   start, progress, pause and stop, so its own resume points and watched marks stay right.
-- Tracker choice per profile (Settings â†’ Accounts): PublicMetaDB, Trakt, Simkl or MDBList.
+- Tracker choice per profile (Settings → Accounts): PublicMetaDB, Trakt, Simkl or MDBList.
   Trakt and Simkl sign in with a short code shown in ROVE and approved in the browser (Simkl's
   newer device sign-in, falling back to its PIN sign-in); MDBList and PublicMetaDB use an API
   key. Every tracker syncs resume points, watched history and the watchlist both ways; Trakt
@@ -200,7 +212,7 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
   textless backdrops.
 - Edit collections and their folders from Home and the Library: rename, reorder, cover art,
   sources, and a right-click menu on every folder.
-- ROVE has its own TMDB key built in; a personal key in Settings â†’ Accounts still wins.
+- ROVE has its own TMDB key built in; a personal key in Settings → Accounts still wins.
 
 **Fixed**
 - Scrolling Home was slow. Cards no longer each carry a shadow and animation, off-screen rows
@@ -220,7 +232,7 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
   `VITE_TRAKT_CLIENT_SECRET`, `VITE_SIMKL_CLIENT_ID`); without them the screen says the build
   does not include that tracker.
 
-### 2026-11-24 â€” Window, Home and profile fixes
+### 2026-11-24 — Window, Home and profile fixes
 
 **Fixed**
 - The window could not be moved. The page runs in WebView2's own process, which holds the mouse
@@ -234,14 +246,14 @@ state of every item, are in `docs/audit/` (player, tracking, and everything else
 - Collection folders whose TMDB source says `MOVIE`/`TV` in capitals loaded TV lists as movies.
 
 **Added**
-- Profile photos: upload an image in Settings â†’ Profiles; it is centre-cropped and shown in the
+- Profile photos: upload an image in Settings → Profiles; it is centre-cropped and shown in the
   picker, the sidebar and everywhere else.
 - Home explains collection-based setups (a metadata addon that keeps its catalogs off Home) and
   offers Import collection and Discover right there.
 - Continue Watching cards show the title, then the episode and time left.
 - Trakt list folders say they need Trakt (coming) instead of showing an empty grid.
 
-### 2026-11-24 â€” The full app
+### 2026-11-24 — The full app
 
 The prototype player became the whole app. Every screen below was checked in the running
 interface; the [feature checklist](FEATURES.md) marks what is not yet checked against real stream
@@ -252,7 +264,7 @@ addons and accounts.
 | ![Home](docs/screenshots/home.jpg) | ![Show](docs/screenshots/title-show.jpg) |
 | ![Episodes](docs/screenshots/episodes.jpg) | ![Continue Watching](docs/screenshots/continue-watching.jpg) |
 | ![Discover](docs/screenshots/discover.jpg) | ![Search](docs/screenshots/search.jpg) |
-| ![Settings Â· Home layout](docs/screenshots/settings-home-layout.jpg) | ![Profiles](docs/screenshots/profiles.jpg) |
+| ![Settings · Home layout](docs/screenshots/settings-home-layout.jpg) | ![Profiles](docs/screenshots/profiles.jpg) |
 
 **Added**
 - Home: featured banner with logo art and optional trailers, Continue Watching with next episodes,
@@ -290,7 +302,7 @@ addons and accounts.
 **Tests**: 28 interface unit tests, 2 shell tests; native playback checked with the debug and the
 packaged release build.
 
-### 2026-11-24 â€” Foundation, player and data layer
+### 2026-11-24 — Foundation, player and data layer
 
 **App shell (Rust)**
 - Frameless window with a ROVE title bar, snapping, resizing from every edge, maximize and
@@ -314,13 +326,13 @@ packaged release build.
   to a silent output so the picture keeps playing, then ROVE reopens the real output when the
   device list changes or on a 5/10/20/30 s backoff. Verified: no stall and no re-buffer through a
   simulated 10 s outage. Not yet verified on a real headset.
-- Audio offset setting for Bluetooth latency (âˆ’500 to +1500 ms), remembered.
+- Audio offset setting for Bluetooth latency (−500 to +1500 ms), remembered.
 
 **Addons and data**
 - Stremio addon protocol: manifests, catalogs (with genre and paging), metadata, streams and
   subtitles; routing by resource, type and id prefix, falling through on empty answers;
   `cacheMaxAge` honoured; in-flight requests de-duplicated; retries with backoff.
-- TMDB: logos, cast, recommendations, certifications, trailers, IMDbâ†”TMDB mapping; TMDB
+- TMDB: logos, cast, recommendations, certifications, trailers, IMDb↔TMDB mapping; TMDB
   collection sources (lists, collections, companies, networks, discover, people).
 - PublicMetaDB: two-way sync of resume points, watched history and the watchlist; progress saved
   on pause and stop and every 5 minutes; watched at 90 %; nothing saved under 2 %; changes queue
