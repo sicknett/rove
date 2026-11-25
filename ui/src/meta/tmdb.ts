@@ -187,3 +187,21 @@ export async function resolveTmdb(id: string, type: string): Promise<TmdbFindRes
   if (imdb) return findByImdb(imdb);
   return null;
 }
+
+/** A /search result: a list item, with the title in its original language as well. */
+export interface TmdbSearchItem extends TmdbListItem {
+  original_title?: string;
+  original_name?: string;
+}
+
+/**
+ * Titles matching a name: one page, in TMDB's own order (closest and best known first). `year`
+ * keeps a movie search to films released that year, and a show search to shows that first
+ * aired in it. Empty without a TMDB key.
+ */
+export async function searchTitles(kind: TmdbKind, query: string, year?: number): Promise<TmdbSearchItem[]> {
+  const params: Record<string, string> = { query, include_adult: 'false' };
+  if (year) params[kind === 'movie' ? 'year' : 'first_air_date_year'] = String(year);
+  const res = await tmdb<{ results?: TmdbSearchItem[] }>(`/search/${kind}`, params, 24 * 3600 * 1000);
+  return res?.results ?? [];
+}

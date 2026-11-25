@@ -298,6 +298,17 @@ export function AppearanceSection() {
           ))}
         </div>
       </SettingRow>
+      <SettingRow label="Navigation" hint="Home, Search and the rest down the left side, or across the top">
+        <Segmented
+          label="Navigation"
+          value={a.navPosition}
+          onChange={(v) => set('appearance', { navPosition: v })}
+          options={[
+            { value: 'left', label: 'Left' },
+            { value: 'top', label: 'Top' },
+          ]}
+        />
+      </SettingRow>
       <SettingRow label="Poster size">
         <Segmented
           label="Poster size"

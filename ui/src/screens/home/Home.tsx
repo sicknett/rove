@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Compass, EyeOff, FolderOpen, FolderPen, Pencil, Puzzle, SlidersHorizontal, Trash2, Upload } from 'lucide-react';
 import { openContextMenu } from '../../ui/contextmenu';
@@ -10,14 +10,22 @@ import { asMediaType, flatItems, useCardArt, useCatalog, useContinueWatching } f
 import { Row, RowRetry, useNearViewport } from '../../media/Row';
 import { PosterCard, WideCard } from '../../media/cards';
 import { navigate } from '../../nav/router';
-import { CONTINUE_KEY, useHomeLayout, type RowPref } from '../../state/homeLayout';
-import { folderSources, parseCollections, useCollections, type Collection, type CollectionFolder, type CollectionSource } from '../../state/collections';
+import { CONTINUE_KEY, FOR_YOU_KEY, isSmartKey, useHomeLayout, type RowPref } from '../../state/homeLayout';
+import { useSmartRowDefs } from '../../recs/hooks';
+import { SmartRow } from './SmartRows';
+import { useAssistantSettings } from '../../ai';
+import { ForYouRow } from '../../ai/ForYouRow';
+import { folderSources, listRowKey, parseCollections, useCollections, withHiddenCollectionKeys, type Collection, type CollectionFolder, type CollectionSource, type ListRow } from '../../state/collections';
 import { fetchSourcePage, sourceBlocker, sourceKey } from '../../data/sources';
+import { ListHomeRow, removeListRow } from '../../lists/ListRow';
 import { useSettings } from '../../state/settings';
 import { Button, Empty, type MenuItem } from '../../ui/controls';
 import { Img } from '../../ui/Img';
 import { playContinue } from '../../player/launch';
 import { Hero } from './Hero';
+import { useAmbient } from './ambient';
+import { AmbientLayer } from './AmbientLayer';
+import { usePersonalHeroItems } from './heroSource';
 import { isServerAddon } from '../../servers';
 import { useCatalogSources } from '../../servers/useSources';
 
@@ -39,18 +47,42 @@ interface ContinueRowDef {
   key: string;
   title: string;
 }
-type RowDef = CatalogRowDef | CollectionRowDef | ContinueRowDef;
+/** The AI assistant's recommendations (ai/ForYouRow). Exists only while an assistant is connected. */
+interface ForYouRowDef {
+  kind: 'for-you';
+  key: string;
+  title: string;
+}
+/** A list imported as a row of its own (lists/ListRow). */
+interface ListRowDef {
+  kind: 'list';
+  key: string;
+  list: ListRow;
+  title: string;
+}
+/** A row made from the profile's own history (recs/, SmartRows): Top picks, Because you watched, the Top 10s, … */
+interface SmartRowDef {
+  kind: 'smart';
+  key: string;
+  title: string;
+}
+type RowDef = CatalogRowDef | CollectionRowDef | ContinueRowDef | ForYouRowDef | ListRowDef | SmartRowDef;
 
 const typeLabel = (t: string) => (t === 'movie' ? 'Movies' : t === 'series' ? 'Shows' : t[0].toUpperCase() + t.slice(1));
 
 function useRowDefs() {
   const addons = useCatalogSources();
   const collections = useCollections((s) => s.collections);
+  const lists = useCollections((s) => s.lists);
   const prefs = useHomeLayout((s) => s.items);
   const ensure = useHomeLayout((s) => s.ensure);
+  const assistantOn = !!useAssistantSettings();
+  const smart = useSmartRowDefs();
 
   const available = useMemo(() => {
     const defs: RowDef[] = [{ kind: 'continue', key: CONTINUE_KEY, title: 'Continue Watching' }];
+    if (assistantOn) defs.push({ kind: 'for-you', key: FOR_YOU_KEY, title: 'For you' });
+    for (const d of smart) defs.push({ kind: 'smart', key: d.key, title: d.title });
     const seen = new Set<string>();
     for (const addon of addons.filter((a) => a.enabled)) {
       for (const catalog of homeCatalogs(addon)) {
@@ -61,16 +93,21 @@ function useRowDefs() {
       }
     }
     for (const c of collections) defs.push({ kind: 'collection', key: `collection_${c.id}`, collection: c, title: c.title });
+    for (const l of lists) defs.push({ kind: 'list', key: listRowKey(l.id), list: l, title: l.title });
     return defs;
-  }, [addons, collections]);
+  }, [addons, collections, lists, assistantOn, smart]);
 
   // Also when the layout itself changes: after "Reset layout" every row is missing from it, and
   // this puts them back. With nothing missing it does nothing.
   useEffect(() => {
     if (useHomeLayout.getState().loaded)
       ensure(
-        available.map((d) => d.key),
-        available.filter((d) => d.kind === 'collection' && d.collection.pinToTop).map((d) => d.key),
+        // With the collections this build cannot show yet, so each has its place when one can.
+        withHiddenCollectionKeys(available.map((d) => d.key)),
+        // For you joins a Home that is already laid out near the top, like a pinned collection:
+        // at the end of a long Home it would never be seen. So do the rows made from history,
+        // together and in their own order (recs/recipes SMART_KEYS).
+        available.filter((d) => d.kind === 'for-you' || d.kind === 'smart' || (d.kind === 'collection' && d.collection.pinToTop)).map((d) => d.key),
       );
   }, [available, ensure, prefs]);
 
@@ -118,6 +155,7 @@ function rowMenu(row: RowDef, shown: string[]): RowMenu {
     },
     { label: 'Home layout…', icon: <SlidersHorizontal size={16} />, onSelect: () => navigate({ name: 'settings', section: 'home' }) },
   );
+  if (row.kind === 'list') items.push('divider', { label: 'Remove list', icon: <Trash2 size={16} />, danger: true, onSelect: () => removeListRow(row.list.id, row.title) });
   return items;
 }
 
@@ -134,9 +172,10 @@ export function Home() {
   const drawnRows = () => [...(rowsEl.current?.querySelectorAll<HTMLElement>('[data-row]') ?? [])].filter((el) => el.querySelector('.row')).map((el) => el.dataset.row!);
   const allAddons = useAddons((s) => s.addons);
   const collectionCount = useCollections((s) => s.collections.length);
-  const anyRowOff = useHomeLayout((s) => s.items.some((i) => !i.enabled && i.key !== CONTINUE_KEY));
-  // Rows besides Continue Watching. With none, Home says how to get some; with any, it is a Home.
-  const hasRows = rows.some((r) => r.kind !== 'continue');
+  const anyRowOff = useHomeLayout((s) => s.items.some((i) => !i.enabled && i.key !== CONTINUE_KEY && i.key !== FOR_YOU_KEY && !isSmartKey(i.key)));
+  // Rows besides Continue Watching and For you, which both come from what was watched and not
+  // from an addon. With none, Home says how to get some; with any, it is a Home.
+  const hasRows = rows.some((r) => r.kind !== 'continue' && r.kind !== 'for-you' && r.kind !== 'smart');
   // Catalogs the addon itself keeps off Home (for collections, or needing a genre): offer a way in.
   const keptOff = allAddons.some((a) => a.enabled && a.manifest.catalogs.some((c) => c.showInHome === false || catalogNeeds(c).some((n) => n !== 'search')));
   const showBuildHome = !hasRows && !addonsUnreadable && collectionCount === 0;
@@ -175,6 +214,15 @@ export function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroQueries.map((q) => q.dataUpdatedAt).join(',')]);
 
+  // The user's own pick for the banner (Continue Watching or the watchlist) wins over the rows.
+  const personalHero = usePersonalHeroItems();
+  const bannerItems = personalHero ?? heroItems;
+  // The page takes its colour from the banner's picture.
+  const ambientOn = useSettings((s) => s.settings.appearance.ambientHome);
+  const [backdrop, setBackdrop] = useState<string | undefined>(undefined);
+  const showBanner = heroOn && heroSetting && bannerItems.length > 0;
+  const ambient = useAmbient(backdrop, ambientOn && showBanner);
+
   // Only on a Home with nothing else on it: a media server's rows or collections are a Home too.
   if (loaded && addonCount === 0 && !hasRows && !addonsUnreadable) {
     return (
@@ -187,17 +235,25 @@ export function Home() {
   }
 
   return (
-    <div className="home">
-      {heroOn && heroSetting && heroItems.length > 0 && <Hero items={heroItems} />}
-      <div ref={rowsEl} className={`home__rows ${heroOn && heroSetting && heroItems.length ? 'home__rows--under-hero' : ''}`}>
+    <div className={`home${ambient ? ' home--ambient' : ''}`}>
+      {/* The banner's colour, pinned behind the page. */}
+      {ambientOn && showBanner && <AmbientLayer color={ambient} />}
+      {showBanner && <Hero items={bannerItems} onBackdrop={setBackdrop} />}
+      <div ref={rowsEl} className={`home__rows ${showBanner ? 'home__rows--under-hero' : ''}`}>
         {addonsUnreadable && <AddonsUnreadable />}
         {showBuildHome && <NoHomeRows reason={anyRowOff ? 'off' : keptOff ? 'kept-off' : 'none'} />}
         {rows.map((r) => (
           <div key={r.key} data-row={r.key}>
             {r.kind === 'continue' ? (
               <ContinueRow title={r.title} menu={() => rowMenu(r, drawnRows())} />
+            ) : r.kind === 'for-you' ? (
+              <ForYouRow title={r.title} menu={() => rowMenu(r, drawnRows())} />
+            ) : r.kind === 'smart' ? (
+              <SmartRow rowKey={r.key} title={r.title} menu={() => rowMenu(r, drawnRows())} />
             ) : r.kind === 'catalog' ? (
               <CatalogRow def={r} menu={() => rowMenu(r, drawnRows())} />
+            ) : r.kind === 'list' ? (
+              <ListHomeRow list={r.list} title={r.title} menu={() => rowMenu(r, drawnRows())} />
             ) : (
               <CollectionRow def={r} menu={() => rowMenu(r, drawnRows())} />
             )}

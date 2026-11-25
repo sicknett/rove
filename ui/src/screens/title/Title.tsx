@@ -12,13 +12,16 @@ import { useSettings } from '../../state/settings';
 import { tmdbImage } from '../../meta/tmdb';
 import { metaIdFor, tmdbFor, useCanonicalId } from '../../tracking/idmap';
 import { useTracker } from '../../tracking/sync';
-import { Button, Dialog, Empty, IconButton, Menu, ProgressLine, Skeleton } from '../../ui/controls';
+import { Button, Dialog, Empty, IconButton, Menu, ProgressLine, Select, Skeleton } from '../../ui/controls';
 import { Img } from '../../ui/Img';
 import { openContextMenu } from '../../ui/contextmenu';
 import { toast } from '../../ui/toast';
 import { Row } from '../../media/Row';
 import { PosterCard, formatRemaining } from '../../media/cards';
 import { formatTime } from '../../format';
+
+/** Seasons shown as tabs before they turn into a dropdown. */
+const SEASON_TABS_MAX = 6;
 
 function runtimeLabel(meta: Meta | null | undefined, tmdbRuntime?: number) {
   const mins = tmdbRuntime ?? (meta?.runtime ? parseInt(String(meta.runtime), 10) : NaN);
@@ -289,13 +292,18 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
   return (
     <section className="episodes" aria-label="Episodes">
       <header className="episodes__head">
-        <div className="episodes__seasons" role="tablist" aria-label="Seasons">
-          {seasons.map((s) => (
-            <button key={s} role="tab" aria-selected={s === current} className={`chip ${s === current ? 'is-on' : ''}`} onClick={() => setSeason(s)}>
-              {s === 0 ? 'Specials' : `Season ${s}`}
-            </button>
-          ))}
-        </div>
+        {/* A few seasons fit as tabs; more than that would run off the page, so they become one picker. */}
+        {seasons.length > SEASON_TABS_MAX ? (
+          <Select value={current} label="Season" onChange={setSeason} options={seasons.map((s) => ({ value: s, label: s === 0 ? 'Specials' : `Season ${s}` }))} />
+        ) : (
+          <div className="episodes__seasons" role="tablist" aria-label="Seasons">
+            {seasons.map((s) => (
+              <button key={s} role="tab" aria-selected={s === current} className={`chip ${s === current ? 'is-on' : ''}`} onClick={() => setSeason(s)}>
+                {s === 0 ? 'Specials' : `Season ${s}`}
+              </button>
+            ))}
+          </div>
+        )}
         <Button
           variant="ghost"
           size="sm"

@@ -46,6 +46,22 @@ export interface ServerItemPreview extends MetaPreview {
   progress?: number;
 }
 
+/** A collection (Jellyfin and Emby call it a box set) or a video playlist on a server. */
+export interface ServerList {
+  id: string;
+  kind: 'collection' | 'playlist';
+  name: string;
+  /** How many items the server counts in it (a playlist counts episodes, which ROVE shows as their shows). */
+  itemCount?: number;
+  poster?: string;
+}
+
+/** One page of a server list. `next` is the offset of the page after it, or null at the end. */
+export interface ServerListPage {
+  items: ServerItemPreview[];
+  next: number | null;
+}
+
 export type PlaybackReport = 'start' | 'progress' | 'pause' | 'stop';
 
 export interface ServerAdapter {
@@ -57,6 +73,10 @@ export interface ServerAdapter {
   /** The server's own continue watching (resume points). */
   resume(s: MediaServer, limit: number): Promise<ServerItemPreview[]>;
   search(s: MediaServer, query: string, limit: number): Promise<ServerItemPreview[]>;
+  /** The server's collections and video playlists: collections first, each group by name. */
+  lists(s: MediaServer): Promise<ServerList[]>;
+  /** One page of a collection or playlist, in the server's order. Episodes stand for their show. */
+  listItems(s: MediaServer, list: Pick<ServerList, 'id' | 'kind'>, offset: number, limit: number): Promise<ServerListPage>;
   /** Full details for a server-only item (`srv:` ids), with episodes for shows. */
   meta(s: MediaServer, itemId: string): Promise<Meta | null>;
   /** The server's own item for a title or episode identified by IMDb id, if it has it. */

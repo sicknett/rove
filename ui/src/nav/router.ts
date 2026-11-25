@@ -14,6 +14,8 @@ export type Route =
   | { name: 'catalog'; addonId: string; type: string; catalogId: string; title?: string; genre?: string }
   | { name: 'collection'; id: string; folder?: string }
   | { name: 'collection-edit'; id: string; folder?: string }
+  /** Every title of a list that is a row on Home (its "See all"). */
+  | { name: 'list'; id: string }
   | { name: 'person'; id: number; label?: string }
   | { name: 'settings'; section?: string };
 

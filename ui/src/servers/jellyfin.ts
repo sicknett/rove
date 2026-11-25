@@ -4,7 +4,7 @@
 
 import type { Meta, Stream, Video } from '../addons/types';
 import { cached, resolutionLabel, roveDeviceId, ServerError, serverFetch, sizeLabel } from './http';
-import { serverItemId, type MediaServer, type PlaybackReport, type ServerAdapter, type ServerItemPreview, type ServerKind, type ServerLibrary } from './types';
+import { serverItemId, type MediaServer, type PlaybackReport, type ServerAdapter, type ServerItemPreview, type ServerKind, type ServerLibrary, type ServerList } from './types';
 
 const VERSION = '0.1';
 const TICKS = 10_000_000;
@@ -133,6 +133,9 @@ interface Item {
   People?: { Name: string; Role?: string; Type?: string; Id?: string; PrimaryImageTag?: string }[];
   Studios?: { Name: string }[];
   CollectionType?: string;
+  /** On a playlist: `Video` or `Audio`. */
+  MediaType?: string;
+  ChildCount?: number;
 }
 
 interface MediaSource {
@@ -297,6 +300,29 @@ export const jellyfinAdapter: ServerAdapter = {
   async search(s, query, limit) {
     const r = await call<{ Items: Item[] }>(s, 'GET', userPath(s, '/Items', '/Items', { searchTerm: query, Recursive: true, IncludeItemTypes: 'Movie,Series', Limit: limit, Fields: FIELDS }));
     return previews(s, r?.Items);
+  },
+
+  async lists(s) {
+    const r = await call<{ Items: Item[] }>(s, 'GET', userPath(s, '/Items', '/Items', { Recursive: true, IncludeItemTypes: 'BoxSet,Playlist', SortBy: 'SortName', SortOrder: 'Ascending', Fields: 'ChildCount', ImageTypeLimit: 1, EnableImageTypes: 'Primary' }));
+    const out: ServerList[] = [];
+    for (const it of r?.Items ?? []) {
+      // Music playlists have nothing ROVE can show.
+      if (it.Type !== 'BoxSet' && !(it.Type === 'Playlist' && it.MediaType !== 'Audio')) continue;
+      out.push({ id: it.Id, kind: it.Type === 'BoxSet' ? 'collection' : 'playlist', name: it.Name, itemCount: it.ChildCount, poster: it.ImageTags?.Primary ? image(s, it.Id, 'Primary', it.ImageTags.Primary) : undefined });
+    }
+    // Collections first; within each group the server's order by name stays.
+    return [...out.filter((l) => l.kind === 'collection'), ...out.filter((l) => l.kind === 'playlist')];
+  },
+
+  async listItems(s, list, offset, limit) {
+    const page = { StartIndex: offset, Limit: limit, Fields: FIELDS, ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Logo' };
+    // A box set's titles are its children; a playlist has its own call, which keeps its order.
+    const path = list.kind === 'playlist' ? `/Playlists/${list.id}/Items?${q({ userId: s.userId, ...page })}` : userPath(s, '/Items', '/Items', { ParentId: list.id, ...page });
+    const r = await call<{ Items: Item[]; TotalRecordCount?: number }>(s, 'GET', path);
+    const raw = r?.Items ?? [];
+    const end = offset + raw.length;
+    const more = typeof r?.TotalRecordCount === 'number' ? end < r.TotalRecordCount : raw.length >= limit;
+    return { items: await unify(s, previews(s, raw)), next: more && raw.length ? end : null };
   },
 
   async meta(s, itemId) {

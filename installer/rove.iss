@@ -36,8 +36,8 @@ WizardSmallImageFile={#ImagesDir}\wizard-small.bmp
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMANumBlockThreads=4
-; Close a running ROVE before replacing its files (the app holds this mutex while open).
-AppMutex=RoveDesktopRunning
+; A running ROVE is handled in [Code] (the app holds the RoveDesktopRunning mutex while open):
+; an update started by the app itself waits for it to finish closing instead of giving up.
 CloseApplications=yes
 RestartApplications=no
 
@@ -62,6 +62,8 @@ Name: "{userdesktop}\ROVE"; Filename: "{app}\rove.exe"; WorkingDir: "{app}"; Tas
 
 [Run]
 Filename: "{app}\rove.exe"; Description: "Open ROVE"; Flags: nowait postinstall skipifsilent
+; An update the app started for itself: open ROVE again when the files are in place.
+Filename: "{app}\rove.exe"; Flags: nowait; Check: IsSelfUpdate
 
 [Code]
 const
@@ -78,11 +80,68 @@ begin
     (RegQueryStringValue(HKCU, WebView2Key, 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'));
 end;
 
+function IsSelfUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
+
+{ False when ROVE is still open and its files cannot be replaced. }
+function RoveClosed: Boolean;
+var
+  Waited: Integer;
+begin
+  Result := True;
+  { The app starts this Setup as it closes: give it a moment to be gone. }
+  if IsSelfUpdate then
+  begin
+    Waited := 0;
+    while CheckForMutexes('RoveDesktopRunning') and (Waited < 30000) do
+    begin
+      Sleep(250);
+      Waited := Waited + 250;
+    end;
+  end;
+  while CheckForMutexes('RoveDesktopRunning') do
+  begin
+    if WizardSilent then
+    begin
+      Result := False;
+      Exit;
+    end;
+    if MsgBox('ROVE is open. Close it, then choose OK to continue.', mbError, MB_OKCANCEL) <> IDOK then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := True;
+  if CheckForMutexes('RoveDesktopRunning') then
+  begin
+    if not UninstallSilent then
+      MsgBox('ROVE is open. Close it, then uninstall again.', mbError, MB_OK);
+    Result := False;
+  end;
+end;
+
 function InitializeSetup: Boolean;
 var
   Code: Integer;
 begin
-  Result := True;
+  { An update the app started arrives with only the UPDATE marker (see shell\src\update.rs for
+    why). It starts itself again without the wizard and steps aside. }
+  if IsSelfUpdate and not WizardSilent then
+  begin
+    Exec(ExpandConstant('{srcexe}'), '/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1', '', SW_SHOW, ewNoWait, Code);
+    Result := False;
+    Exit;
+  end;
+  Result := RoveClosed;
+  if not Result then
+    Exit;
   if not HasWebView2 then
   begin
     if MsgBox('ROVE needs Microsoft Edge WebView2, which this PC does not have yet.' + #13#10#13#10 +

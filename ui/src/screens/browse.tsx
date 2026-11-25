@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Clock, Search as SearchIcon, X, Compass, Pencil } from 'lucide-react';
+import { ArrowRight, Clock, Search as SearchIcon, Sparkles, X, Compass, Pencil } from 'lucide-react';
 import { canBrowse, canOpenType, catalogExtras, catalogNeeds, catalogSupports, fetchCatalog, fetchMeta, genreOptions } from '../addons/client';
 import { useAddons } from '../addons/store';
 import type { InstalledAddon, ManifestCatalog, MetaPreview } from '../addons/types';
@@ -9,17 +9,21 @@ import { paging, PosterGrid } from '../media/Grid';
 import { Row, RowRetry } from '../media/Row';
 import { PosterCard } from '../media/cards';
 import { navigate, useNav, useScreen } from '../nav/router';
-import { Button, Empty, Select, Spinner } from '../ui/controls';
+import { Button, Empty, Segmented, Select, Spinner } from '../ui/controls';
 import { findByImdb, tmdb, tmdbImage } from '../meta/tmdb';
 import { Img } from '../ui/Img';
 import { useCollections, folderSources, type CollectionSource } from '../state/collections';
-import { useSourceItems, sourceBlocker, sourceLabel, sourceKey } from '../data/sources';
+import { useSourceItems, blockerMessage, sourceBlocker, sourceLabel, sourceKey, sourceProviderName } from '../data/sources';
 import { docs } from '../lib/native';
 import { tmdbKeyId } from '../state/keys';
 import { profileDoc } from '../state/profiles';
 import { asMediaType } from '../data/hooks';
 import { isServerAddon } from '../servers';
 import { useCatalogSources } from '../servers/useSources';
+import { assistantName, useAssistantSettings } from '../ai';
+import { useAsk } from '../ai/ask';
+import { AskResults } from '../ai/AskResults';
+import { SMART_SOURCE, SmartList } from './home/SmartRows';
 
 const typeName = (t: string) => (t === 'movie' ? 'Movies' : t === 'series' ? 'Shows' : t[0].toUpperCase() + t.slice(1));
 
@@ -147,7 +151,13 @@ export function Discover({ type, catalog: catalogKey, genre }: { type?: string; 
 
 // ---------- One catalog ("See all") ----------
 
-export function CatalogPage({ addonId, type, catalogId, title, genre }: { addonId: string; type: string; catalogId: string; title?: string; genre?: string }) {
+export function CatalogPage(props: { addonId: string; type: string; catalogId: string; title?: string; genre?: string }) {
+  // "See all" of a Home row made from the profile's history: it has no addon behind it.
+  if (props.addonId === SMART_SOURCE) return <SmartList rowKey={props.catalogId} title={props.title} />;
+  return <AddonCatalogPage {...props} />;
+}
+
+function AddonCatalogPage({ addonId, type, catalogId, title, genre }: { addonId: string; type: string; catalogId: string; title?: string; genre?: string }) {
   // Not from an addon that is switched off or that this profile may not use (see canBrowse).
   const addon = useCatalogSources().find((a) => a.manifest.id === addonId && canBrowse(a));
   const catalog = addon?.manifest.catalogs.find((c) => c.id === catalogId && c.type === type);
@@ -223,6 +233,25 @@ export function Search({ q: initial }: { q?: string }) {
   const [recent, setRecent] = useState<string[]>([]);
   const [opening, setOpening] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  // Ask: the same box, answered by the AI assistant connected in Settings → Accounts. Without one
+  // there is no Ask. While asking, `query` stays empty, so nothing of normal search draws or loads.
+  const assistant = useAssistantSettings();
+  const [askMode, setAskMode] = useState(false);
+  const asking = askMode && !!assistant;
+  const askName = assistant ? assistantName(assistant) : '';
+  const ask = useAsk();
+  const askBusy = asking && ask.state.status === 'loading';
+
+  const switchMode = (toAsk: boolean) => {
+    if (toAsk === asking) return;
+    // What was typed for one is not meant for the other: a sentence is no search, a name no request.
+    setAskMode(toAsk);
+    setText('');
+    setQuery('');
+    const nav = useNav.getState();
+    if (nav.stack[nav.index].key === screen.key) nav.replace({ name: 'search' });
+    input.current?.focus();
+  };
 
   useEffect(() => {
     void savedSearches(HISTORY_DOC())
@@ -243,7 +272,8 @@ export function Search({ q: initial }: { q?: string }) {
   useEffect(() => {
     // Only while this screen is the one on show. `replace` rewrites whichever page is current,
     // so a timer that outlived a click on a result would turn that title's page into Search.
-    if (!screen.active) return;
+    // And not while asking: the assistant is asked on Enter, never as the text changes.
+    if (!screen.active || asking) return;
     const t = window.setTimeout(() => {
       const q = text.trim();
       setQuery(q);
@@ -251,7 +281,7 @@ export function Search({ q: initial }: { q?: string }) {
       if (nav.stack[nav.index].key === screen.key) nav.replace({ name: 'search', q: q || undefined });
     }, 380);
     return () => window.clearTimeout(t);
-  }, [text, screen.active, screen.key]);
+  }, [text, screen.active, screen.key, asking]);
 
   useEffect(() => {
     if (query.length < 2) return;
@@ -297,7 +327,7 @@ export function Search({ q: initial }: { q?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [results.map((r) => r.dataUpdatedAt).join(','), query]);
 
-  const loading = results.some((r) => r.isLoading && r.fetchStatus !== 'idle');
+  const loading = !asking && results.some((r) => r.isLoading && r.fetchStatus !== 'idle');
   const idMatch = /^(tt\d{5,}|tmdb:\d+)$/i.exec(query)?.[1].toLowerCase();
   // Addons that did not answer are said so: no results from them is not "nothing found".
   const failed = [...new Set(targets.filter((_, i) => results[i]?.isError).map((t) => t.addon.manifest.name))];
@@ -315,26 +345,50 @@ export function Search({ q: initial }: { q?: string }) {
   return (
     <div className="screen-pad">
       <div className="search-field">
-        <SearchIcon size={22} className="search-field__icon" />
+        {asking ? <Sparkles size={22} className="search-field__icon" /> : <SearchIcon size={22} className="search-field__icon" />}
         <input
           ref={input}
           className="search-field__input"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Movies and shows, or an IMDb id"
-          spellCheck={false}
-          aria-label="Search"
-          onKeyDown={(e) => e.key === 'Escape' && setText('')}
+          placeholder={asking ? `Ask ${askName} what to watch, in your own words` : 'Movies and shows, or an IMDb id'}
+          spellCheck={asking}
+          aria-label={asking ? `Ask ${askName}` : 'Search'}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setText('');
+            else if (e.key === 'Enter' && asking) void ask.submit(text);
+          }}
         />
-        {loading && <Spinner size={20} />}
+        {(loading || askBusy) && <Spinner size={20} />}
         {text && (
           <button className="ibtn ibtn--sm" aria-label="Clear" onClick={() => (setText(''), input.current?.focus())}>
             <X size={18} />
           </button>
         )}
+        {asking &&
+          (askBusy ? (
+            <Button variant="secondary" size="sm" onClick={ask.cancel}>
+              Stop
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" icon={<ArrowRight size={16} />} disabled={!text.trim()} aria-label={`Ask ${askName}`} title="Ask (Enter)" onClick={() => void ask.submit(text)} />
+          ))}
+        {assistant && (
+          <Segmented
+            label="Search or ask"
+            value={asking ? 'ask' : 'search'}
+            onChange={(v) => switchMode(v === 'ask')}
+            options={[
+              { value: 'search', label: 'Search' },
+              { value: 'ask', label: 'Ask' },
+            ]}
+          />
+        )}
       </div>
 
-      {query.length < 2 && recent.length > 0 && (
+      {asking && <AskResults ask={ask} assistant={askName} onPick={(t) => (setText(t), void ask.submit(t))} />}
+
+      {!asking && query.length < 2 && recent.length > 0 && (
         <section className="recent-searches">
           <h2 className="eyebrow">Recent searches</h2>
           <div className="chips">
@@ -358,7 +412,7 @@ export function Search({ q: initial }: { q?: string }) {
 
       {query.length === 1 && <p className="s-empty">Search starts at two letters.</p>}
 
-      {!targets.length && <Empty title="No addon can search">Add a metadata addon with search (AIOMetadata can) in Settings → Addons.</Empty>}
+      {!asking && !targets.length && <Empty title="No addon can search">Add a metadata addon with search (AIOMetadata can) in Settings → Addons.</Empty>}
 
       {idMatch &&
         (idMatch.startsWith('tt') ? (
@@ -487,9 +541,9 @@ export function Person({ id, name }: { id: number; name?: string }) {
 
 /** Why a source cannot be shown at all, in words. */
 function Blocked({ why }: { why: NonNullable<ReturnType<typeof sourceBlocker>> }) {
-  if (why === 'tmdb-key') return <Empty title="This needs a TMDB key">Add one in Settings → Accounts.</Empty>;
-  if (why === 'addon') return <Empty title="The addon for this catalog is not available">It is not installed, or it is switched off in Settings → Addons.</Empty>;
-  return <Empty title="This source is not supported">ROVE shows addon catalogs and TMDB lists. This source is neither.</Empty>;
+  // Each provider has its own reason (a missing key, a signed-out account, a server switched off).
+  const { title, text } = blockerMessage(why);
+  return <Empty title={title}>{text}</Empty>;
 }
 
 export function CollectionPage({ id, folder }: { id: string; folder?: string }) {
@@ -546,7 +600,7 @@ export function CollectionPage({ id, folder }: { id: string; folder?: string }) 
         </Button>
       </header>
       {!sources.length ? (
-        <Empty title="This folder has no sources yet">Add an addon catalog or a TMDB list with Edit folder.</Empty>
+        <Empty title="This folder has no sources yet">Add an addon catalog, a TMDB source or a list with Edit folder.</Empty>
       ) : asRows ? (
         // Rows that cannot be shown are left out; when that is all of them, the first says why.
         blockers.every(Boolean) ? (
@@ -580,7 +634,7 @@ function SourceGrid({ source }: { source: CollectionSource }) {
   if (q.isLoadingError)
     return (
       <LoadFailed title="This did not load" onRetry={() => void q.refetch()}>
-        {(source.provider ?? 'addon').toLowerCase() === 'tmdb' ? 'TMDB' : 'The addon'} did not answer.
+        {sourceProviderName(source)} did not answer.
       </LoadFailed>
     );
   if (!q.isLoading && !items.length) return <Empty title="Nothing here">This source has no titles right now.</Empty>;

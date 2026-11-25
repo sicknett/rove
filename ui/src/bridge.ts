@@ -14,7 +14,9 @@ type Outbound =
   | { t: 'log'; message: string }
   | { t: 'close-ready' }
   | { t: 'now-playing'; state: 'playing' | 'paused' | 'stopped'; title?: string; subtitle?: string; artwork?: string; canNext?: boolean }
-  | { t: 'open-folder'; which: 'logs' | 'screenshots' | 'data' };
+  | { t: 'open-folder'; which: 'logs' | 'screenshots' | 'data' }
+  /** Close, run the update the shell downloaded and checked, and open again. */
+  | { t: 'install-update' };
 
 export type Inbound =
   | { t: 'props'; v: Record<string, unknown> }

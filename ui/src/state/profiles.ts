@@ -44,10 +44,12 @@ const newId = () => `p${Date.now().toString(36)}${Math.random().toString(36).sli
 /**
  * Everything kept per profile, by the base name given to `profileDoc`: settings, Home layout,
  * collections (and that they were seeded), watch history, track choices, remembered links, recent
- * searches; and, encrypted, the tracker sign-in (`pmdb` is its older form). A new per-profile
- * document belongs in this list, or it outlives its profile.
+ * searches, recent asks to the AI assistant and its saved "For you" recommendations, the taste
+ * profile behind the rows made from history (`recs`) and TMDB's saved answers for them
+ * (`recs-cache`); and, encrypted, the tracker sign-in (`pmdb` is its older form). A new
+ * per-profile document belongs in this list, or it outlives its profile.
  */
-export const PROFILE_DOCS = ['settings', 'home', 'collections', 'collections-seeded', 'history', 'tracks', 'links', 'searches'] as const;
+export const PROFILE_DOCS = ['settings', 'home', 'collections', 'collections-seeded', 'history', 'tracks', 'links', 'searches', 'asks', 'foryou', 'recs', 'recs-cache'] as const;
 export const PROFILE_SECRETS = ['tracker', 'pmdb'] as const;
 
 /** Removes a deleted profile's files. */

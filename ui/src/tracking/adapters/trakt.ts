@@ -1,5 +1,6 @@
 // Trakt (api.trakt.tv, API v2): device sign-in, playback progress, watched history, watchlist.
-// ROVE's Trakt app id and secret come from the build (VITE_TRAKT_CLIENT_ID / _SECRET).
+// ROVE's Trakt app id comes from the build (VITE_TRAKT_CLIENT_ID). Trakt apps no longer have a
+// secret: sign-in and token renewal send the app id only, and go to Trakt's sign-in host.
 
 import { watchKey } from '../../addons/ids';
 import type { ProgressEntry, WatchedEntry } from '../../state/history';
@@ -7,8 +8,11 @@ import { idsFor, listOf, metaIdFromIds, SCROBBLE_CAP_PERCENT, timeOf, tmdbFromId
 import { TrackerError, type PullResult, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
 
 const API = 'https://api.trakt.tv';
+/** Every `/oauth/…` request goes here, not to the API host. */
+const AUTH = 'https://auth.trakt.tv';
+/** The redirect address registered for ROVE's Trakt app; token renewal has to name it exactly. */
+const REDIRECT_URI = 'urn:ietf:wg:oauth:2.0:oob';
 export const TRAKT_CLIENT_ID = (import.meta.env.VITE_TRAKT_CLIENT_ID as string | undefined)?.trim() || '';
-const TRAKT_CLIENT_SECRET = (import.meta.env.VITE_TRAKT_CLIENT_SECRET as string | undefined)?.trim() || '';
 
 type Ids = Record<string, unknown>;
 
@@ -17,13 +21,13 @@ function call<T>(account: TrackerAccount | null, method: 'GET' | 'POST' | 'DELET
   return trackerFetch<T>({
     service: 'Trakt',
     method,
-    url: `${API}${path}`,
+    url: `${path.startsWith('/oauth/') ? AUTH : API}${path}`,
     json,
     writeGapMs: 1100,
     headers: {
       'trakt-api-version': '2',
       'trakt-api-key': TRAKT_CLIENT_ID,
-      'User-Agent': 'ROVE/0.1',
+      'User-Agent': `ROVE/${__APP_VERSION__}`,
       ...(account?.accessToken ? { Authorization: `Bearer ${account.accessToken}` } : {}),
     },
   });
@@ -61,7 +65,7 @@ export async function traktPollDevice(code: DeviceCode, signal: AbortSignal): Pr
   while (Date.now() < code.expiresAt && !signal.aborted) {
     await new Promise((r) => setTimeout(r, interval));
     try {
-      const { data } = await call<TokenResponse>(null, 'POST', '/oauth/device/token', { code: code.deviceCode, client_id: TRAKT_CLIENT_ID, client_secret: TRAKT_CLIENT_SECRET });
+      const { data } = await call<TokenResponse>(null, 'POST', '/oauth/device/token', { code: code.deviceCode, client_id: TRAKT_CLIENT_ID });
       const acc = accountFrom(data);
       const me = await call<{ user?: { username?: string } }>(acc, 'GET', '/users/settings').catch(() => null);
       return { ...acc, username: me?.data?.user?.username };
@@ -239,10 +243,200 @@ export const traktAdapter: TrackerAdapter = {
     const { data } = await call<TokenResponse>(null, 'POST', '/oauth/token', {
       refresh_token: account.refreshToken,
       client_id: TRAKT_CLIENT_ID,
-      client_secret: TRAKT_CLIENT_SECRET,
-      redirect_uri: 'urn:ietf:wg:oauth:2.0:oob',
+      redirect_uri: REDIRECT_URI,
       grant_type: 'refresh_token',
     });
+    // Trakt's refresh tokens work once: the new pair replaces the old one at once.
     return { ...accountFrom(data, account.username) };
   },
 };
+
+// ---------- Lists ----------
+//
+// Reading a public list needs ROVE's app id only, so these work with no Trakt account connected
+// (and with another tracker connected). The account's own things (its watchlist, its lists that
+// are not public, the lists it liked) need its token as well. Paths and shapes follow Trakt's
+// API reference (Lists, Users and Search groups).
+
+/** A Trakt list as the pickers show it. */
+export interface TraktList {
+  id: number;
+  slug?: string;
+  name: string;
+  description?: string;
+  itemCount?: number;
+  likes?: number;
+  /** The owner's display name and slug, when Trakt sent them (it leaves them out of "my lists"). */
+  owner?: string;
+  ownerSlug?: string;
+  /** `public`, `private`, `link` or `friends`. Only public lists can be read without the owner's sign-in. */
+  privacy?: string;
+}
+
+interface RawList {
+  name?: string;
+  description?: string | null;
+  privacy?: string;
+  item_count?: number;
+  likes?: number;
+  ids?: { trakt?: number; slug?: string };
+  user?: { username?: string; name?: string; ids?: { slug?: string } };
+}
+
+function listFrom(l: RawList | null | undefined): TraktList | null {
+  const id = Number(l?.ids?.trakt);
+  if (!l || !l.name || !(id > 0)) return null;
+  return {
+    id,
+    slug: l.ids?.slug,
+    name: l.name,
+    description: l.description || undefined,
+    itemCount: l.item_count,
+    likes: l.likes,
+    owner: l.user?.name || l.user?.username,
+    ownerSlug: l.user?.ids?.slug,
+    privacy: l.privacy,
+  };
+}
+
+const lists = (raw: (RawList | null | undefined)[]) => raw.map(listFrom).filter((l): l is TraktList => !!l);
+
+/** The signed-in account's own lists. */
+export async function traktMyLists(account: TrackerAccount): Promise<TraktList[]> {
+  const { data } = await call<RawList[]>(account, 'GET', '/users/me/lists');
+  return lists(listOf(data, 'Trakt'));
+}
+
+/** Lists the signed-in account liked, most recent first. */
+export async function traktLikedLists(account: TrackerAccount, limit = 50): Promise<TraktList[]> {
+  const { data } = await call<{ type?: string; list?: RawList }[]>(account, 'GET', `/users/me/likes/lists?page=1&limit=${limit}`);
+  return lists(listOf(data, 'Trakt').map((x) => x.list));
+}
+
+/** Trakt's popular or trending public lists. */
+export async function traktPublicLists(kind: 'popular' | 'trending', limit = 30): Promise<TraktList[]> {
+  const { data } = await call<{ list?: RawList }[]>(null, 'GET', `/lists/${kind}?page=1&limit=${limit}`);
+  return lists(listOf(data, 'Trakt').map((x) => x.list));
+}
+
+/** Public lists whose name or description matches. */
+export async function traktSearchLists(query: string, limit = 30): Promise<TraktList[]> {
+  const { data } = await call<{ type?: string; list?: RawList }[]>(null, 'GET', `/search/list?query=${encodeURIComponent(query)}&page=1&limit=${limit}`);
+  return lists(listOf(data, 'Trakt').map((x) => x.list));
+}
+
+/** What identifies a list to read: its number, its owner and slug, or the account's watchlist. */
+export interface TraktListRef {
+  id?: number;
+  user?: string;
+  slug?: string;
+  watchlist?: boolean;
+}
+
+/** Whether reading it takes the account's token: the watchlist and lists addressed as `me`. */
+export const traktRefNeedsAccount = (ref: TraktListRef) => !!ref.watchlist || (!ref.id && ref.user === 'me');
+
+/**
+ * A list from what a user pasted: a trakt.tv link (`/lists/55`, `/users/sean/lists/some-slug`),
+ * a bare number, or `owner/slug`. Null when it is none of these.
+ */
+export function parseTraktListLink(text: string): TraktListRef | null {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) return { id: Number(t) };
+  const path = t.replace(/^https?:\/\/[^/]*trakt\.tv/i, '').split(/[?#]/)[0];
+  const byUser = /^\/?users\/([^/]+)\/lists\/([^/]+)/i.exec(path);
+  if (byUser) return { user: decodeURIComponent(byUser[1]), slug: decodeURIComponent(byUser[2]) };
+  const byId = /^\/?lists\/(\d+)\b/i.exec(path);
+  if (byId) return { id: Number(byId[1]) };
+  const bare = /^([\w.-]+)\/([\w.-]+)$/.exec(t);
+  return bare ? { user: bare[1], slug: bare[2] } : null;
+}
+
+/** A list's name and size, for a pasted link. Null when Trakt has no such public list. */
+export async function traktListInfo(ref: TraktListRef, account?: TrackerAccount | null): Promise<TraktList | null> {
+  const path = ref.id ? `/lists/${ref.id}` : ref.user && ref.slug ? `/users/${encodeURIComponent(ref.user)}/lists/${encodeURIComponent(ref.slug)}` : null;
+  if (!path) return null;
+  try {
+    const { data } = await call<RawList>(traktRefNeedsAccount(ref) ? account ?? null : null, 'GET', path);
+    return listFrom(data);
+  } catch (e) {
+    if (e instanceof TrackerError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Orders Trakt sorts list items by. Collection files also say `original`: the list's own order. */
+const LIST_SORTS = new Set(['rank', 'added', 'title', 'released', 'runtime', 'popularity', 'random', 'percentage', 'imdb_rating', 'tmdb_rating', 'rt_tomatometer', 'rt_audience', 'metascore', 'votes', 'imdb_votes', 'tmdb_votes', 'my_rating', 'watched', 'collected']);
+
+export interface TraktItemsQuery {
+  /** Movies only or shows only; both when left out. */
+  media?: 'movie' | 'show';
+  sortBy?: string;
+  sortHow?: string;
+  /** 1-based. */
+  page: number;
+  limit: number;
+}
+
+/** A title on a Trakt list, with what `extended=full` adds. */
+export interface TraktListTitle {
+  metaId: string;
+  type: 'movie' | 'series';
+  name: string;
+  year?: number;
+  tmdbId?: number;
+  overview?: string;
+  /** Trakt's own rating, 0 to 10. */
+  rating?: number;
+  genres?: string[];
+}
+
+interface RawTitle {
+  title?: string;
+  year?: number | null;
+  ids?: Ids;
+  overview?: string | null;
+  rating?: number | null;
+  genres?: string[] | null;
+}
+
+/**
+ * One page of a list's movies and shows, in the list's own order unless a sort is asked for.
+ * Seasons, episodes and people on a list are left out, as are titles with neither an IMDb nor a
+ * TMDB id. `next` is the page after this one, or null when this was the last: by Trakt's page
+ * count when it sent one, else by whether this page came back full.
+ */
+export async function traktListItems(ref: TraktListRef, q: TraktItemsQuery, account?: TrackerAccount | null): Promise<{ items: TraktListTitle[]; next: number | null }> {
+  // The watchlist names its types in the plural and has `all`; lists take `movie`, `show` or both.
+  const base = ref.watchlist
+    ? `/users/me/watchlist/${q.media ? `${q.media}s` : 'all'}`
+    : ref.id
+      ? `/lists/${ref.id}/items/${q.media ?? 'movie,show'}`
+      : `/users/${encodeURIComponent(ref.user ?? '')}/lists/${encodeURIComponent(ref.slug ?? '')}/items/${q.media ?? 'movie,show'}`;
+  const sortBy = q.sortBy?.toLowerCase();
+  const sort = sortBy && LIST_SORTS.has(sortBy) ? `/${sortBy}/${q.sortHow?.toLowerCase() === 'desc' ? 'desc' : 'asc'}` : '';
+  const needsAccount = traktRefNeedsAccount(ref);
+  if (needsAccount && !account?.accessToken) throw new TrackerError('unauthorized', 'Sign in to Trakt to read this list.');
+  // A public list is read without the token: one that has run out must not stand in its way.
+  const res = await call<{ type?: string; movie?: RawTitle; show?: RawTitle }[]>(needsAccount ? account ?? null : null, 'GET', `${base}${sort}?page=${q.page}&limit=${q.limit}&extended=full`);
+  const raw = listOf(res.data, 'Trakt');
+  const items: TraktListTitle[] = [];
+  for (const it of raw) {
+    const title = it.type === 'movie' ? it.movie : it.type === 'show' ? it.show : undefined;
+    const metaId = metaIdFromIds(title?.ids);
+    if (!title?.title || !metaId) continue;
+    items.push({
+      metaId,
+      type: it.type === 'movie' ? 'movie' : 'series',
+      name: title.title,
+      year: title.year ?? undefined,
+      tmdbId: tmdbFromIds(title.ids),
+      overview: title.overview || undefined,
+      rating: title.rating || undefined,
+      genres: title.genres ?? undefined,
+    });
+  }
+  const pages = Number(Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === 'x-pagination-page-count')?.[1]);
+  const more = Number.isFinite(pages) && pages > 0 ? q.page < pages : raw.length >= q.limit;
+  return { items, next: more && raw.length ? q.page + 1 : null };
+}

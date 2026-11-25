@@ -3,7 +3,11 @@ import { ArrowDown, ArrowUp, FolderPlus, Pencil, Plus, Trash2, X } from 'lucide-
 import { canBrowse, canOpenType, catalogNeeds, genreOptions } from '../addons/client';
 import { useAddons } from '../addons/store';
 import { folderSources, useCollections, type CollectionFolder, type CollectionSource } from '../state/collections';
-import { sourceKey, sourceLabel } from '../data/sources';
+import { blockerMessage, sourceBlocker, sourceKey, sourceLabel, sourceOrigin } from '../data/sources';
+import { ImportListsButton } from '../lists/ImportLists';
+import { ListPickerDialog } from '../lists/ListPicker';
+import { TRAKT_NEEDS_APP_ID } from '../lists/providers';
+import type { ListProviderId } from '../lists/types';
 import { goBack, useNav } from '../nav/router';
 import { Button, Dialog, Empty, IconButton, Segmented, Select, Switch, TextField } from '../ui/controls';
 import { Img } from '../ui/Img';
@@ -13,6 +17,9 @@ import { CONTINUE_KEY, useHomeLayout } from '../state/homeLayout';
 
 export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?: string }) {
   const collection = useCollections((s) => s.collections.find((c) => c.id === id));
+  // Folders that hold nothing but Trakt lists are kept but not shown by a build without ROVE's
+  // Trakt app id. They are counted here so the page can say they exist.
+  const hiddenFolders = useCollections((s) => (s.saved.find((c) => c.id === id)?.folders.length ?? 0) - (s.collections.find((c) => c.id === id)?.folders.length ?? 0));
   const store = useCollections.getState();
   const replace = useNav((s) => s.replace);
   const [title, setTitle] = useState(collection?.title ?? '');
@@ -65,8 +72,19 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
         </SettingRow>
       </Group>
 
-      <Group title={`Folders · ${collection.folders.length}`} note="Folders are the tiles in this collection's row on Home. Each one opens a set of sources: addon catalogs or TMDB lists.">
+      <Group
+        title={`Folders · ${collection.folders.length}`}
+        note={
+          <>
+            Folders are the tiles in this collection's row on Home. Each one opens a set of sources: addon catalogs, TMDB sources, or lists from Trakt, MDBList and your media servers.
+            {hiddenFolders > 0 && ` ${hiddenFolders} more ${hiddenFolders === 1 ? 'folder holds' : 'folders hold'} only Trakt lists: ${TRAKT_NEEDS_APP_ID}, so ${hiddenFolders === 1 ? 'it is' : 'they are'} kept but not shown.`}
+          </>
+        }
+      >
         <div className="s-row s-row--actions">
+          <ImportListsButton into={id} size="md">
+            Import lists as folders
+          </ImportListsButton>
           <Button
             variant="secondary"
             icon={<FolderPlus size={16} />}
@@ -162,6 +180,8 @@ const TMDB_KINDS = [
   { value: 'DIRECTOR', label: 'Director' },
 ] as const;
 
+const isListProvider = (v: string | null): v is ListProviderId => v === 'trakt' || v === 'mdblist' || v === 'server';
+
 /** Edits a folder, or with `folder` null makes a new one, which exists only once it is saved. */
 function FolderEditor({ collectionId, folder, onClose }: { collectionId: string; folder: CollectionFolder | null; onClose: () => void }) {
   const store = useCollections.getState();
@@ -170,8 +190,13 @@ function FolderEditor({ collectionId, folder, onClose }: { collectionId: string;
   const [cover, setCover] = useState(folder?.coverImageUrl ?? '');
   const [shape, setShape] = useState<'poster' | 'landscape'>((folder?.tileShape ?? '').match(/landscape|wide/i) ? 'landscape' : 'poster');
   const [hideTitle, setHideTitle] = useState(!!folder?.hideTitle);
-  const [sources, setSources] = useState<CollectionSource[]>(folder ? folderSources(folder) : []);
-  const [adding, setAdding] = useState<'addon' | 'tmdb' | null>(null);
+  // The folder as it is saved, not as it is shown: a source this build cannot show is listed here
+  // (with the reason) and is still there after Save.
+  const [sources, setSources] = useState<CollectionSource[]>(() => {
+    const saved = folder && store.saved.find((c) => c.id === collectionId)?.folders.find((f) => f.id === folder.id);
+    return folder ? folderSources(saved ?? folder) : [];
+  });
+  const [adding, setAdding] = useState<'addon' | 'tmdb' | ListProviderId | null>(null);
 
   const catalogs = useMemo(
     () =>
@@ -260,35 +285,58 @@ function FolderEditor({ collectionId, folder, onClose }: { collectionId: string;
 
         <div>
           <span className="field__label">Sources · {sources.length}</span>
-          {sources.length === 0 && <p className="s-empty">No sources yet. Add a catalog from your addons or a TMDB list.</p>}
+          {sources.length === 0 && <p className="s-empty">No sources yet. Add a catalog from your addons, a TMDB source, or a list from Trakt, MDBList or a media server.</p>}
           <ul className="source-list">
-            {sources.map((s, i) => (
-              <li key={`${sourceKey(s)}-${i}`} className="source-list__item">
-                <span className="source-list__text">
-                  <span>{sourceLabel(s)}</span>
-                  <span className="source-list__kind">{(s.provider ?? 'addon') === 'tmdb' ? `TMDB · ${s.tmdbSourceType?.toLowerCase()} ${s.tmdbId ?? ''}` : (s.provider ?? 'addon') === 'trakt' ? 'Trakt list' : `Addon · ${s.addonId}`}</span>
-                </span>
-                <IconButton label="Move up" size="sm" disabled={i === 0} onClick={() => move(i, i - 1)}>
-                  <ArrowUp size={15} />
-                </IconButton>
-                <IconButton label="Move down" size="sm" disabled={i === sources.length - 1} onClick={() => move(i, i + 1)}>
-                  <ArrowDown size={15} />
-                </IconButton>
-                <IconButton label="Remove source" size="sm" onClick={() => setSources(sources.filter((_, j) => j !== i))}>
-                  <X size={15} />
-                </IconButton>
-              </li>
-            ))}
+            {sources.map((s, i) => {
+              const why = sourceBlocker(s);
+              return (
+                <li key={`${sourceKey(s)}-${i}`} className="source-list__item">
+                  <span className="source-list__text">
+                    <span>{sourceLabel(s)}</span>
+                    <span className="source-list__kind">
+                      {sourceOrigin(s)}
+                      {why && <span className="source-list__blocked"> · {blockerMessage(why).title}</span>}
+                    </span>
+                  </span>
+                  <IconButton label="Move up" size="sm" disabled={i === 0} onClick={() => move(i, i - 1)}>
+                    <ArrowUp size={15} />
+                  </IconButton>
+                  <IconButton label="Move down" size="sm" disabled={i === sources.length - 1} onClick={() => move(i, i + 1)}>
+                    <ArrowDown size={15} />
+                  </IconButton>
+                  <IconButton label="Remove source" size="sm" onClick={() => setSources(sources.filter((_, j) => j !== i))}>
+                    <X size={15} />
+                  </IconButton>
+                </li>
+              );
+            })}
           </ul>
-          {adding === null && (
-            <div className="inline-form">
+          {(adding === null || isListProvider(adding)) && (
+            <div className="inline-form inline-form--wrap">
               <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setAdding('addon')} disabled={!catalogs.length}>
                 Addon catalog
               </Button>
               <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setAdding('tmdb')}>
                 TMDB source
               </Button>
+              <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setAdding('trakt')}>
+                Trakt list
+              </Button>
+              <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setAdding('mdblist')}>
+                MDBList list
+              </Button>
+              <Button variant="secondary" size="sm" icon={<Plus size={15} />} onClick={() => setAdding('server')}>
+                Server list
+              </Button>
             </div>
+          )}
+          {isListProvider(adding) && (
+            <ListPickerDialog
+              provider={adding}
+              has={(key) => sources.some((s) => sourceKey(s) === key)}
+              onAdd={(lists) => setSources((now) => [...now, ...lists.filter((l) => !now.some((s) => sourceKey(s) === l.key)).map((l) => l.source)])}
+              onClose={() => setAdding(null)}
+            />
           )}
           {adding === 'addon' && (
             <div className="inline-form inline-form--wrap">

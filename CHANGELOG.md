@@ -5,6 +5,73 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-25
+
+The first release that updates itself. Everything under "Audit and repair" below is part of it.
+
+### Discovery, lists, assistant, updates
+
+**Added**
+- **Rows made for you.** Home builds streaming-service style rows from your own history, with no
+  account and no key to enter: Top picks for you, Because you watched …, Trending this week,
+  numbered Top 10 movies and shows, New releases you might like, rows for your strongest genres,
+  Hidden gems and From your watchlist. Titles you have watched, are watching or marked "Not
+  interested" are left out, and one title does not repeat across rows. One switch in Settings →
+  Home layout turns them all off.
+- **Lists from Trakt, MDBList and your media servers.** "Import lists" (Library → Collections,
+  Settings → Home layout, and inside a collection's editor) adds your lists, liked, popular and
+  searched lists, or a pasted link, as rows on Home or as folders in a collection. Server
+  collections and playlists count as lists.
+- **The built-in Home's Trakt folders work.** Kaptain's Collection ships with 326 Trakt-list
+  folders that could not load before; they do now. Folders and collections an earlier build
+  removed for that reason are put back once, without touching anything you made.
+- **AI assistant** (Settings → Accounts) with your own key: Claude, Gemini, or any
+  OpenAI-compatible service. "Ask" in Search takes a request in plain words and shows real
+  titles with a one-line reason each; a "For you" row on Home refreshes at most once a day.
+  Nothing is sent unless you connect one.
+- **Update button.** ROVE looks for a newer release at start and in Settings → About; updating
+  downloads the Setup, checks it against the release signature, installs and reopens ROVE.
+- **Banner like a streaming service's.** A title's trailer fades in over its art, the description
+  steps aside and the logo shrinks while it plays, and the banner moves on when it ends. It can
+  start by itself or only under the pointer, has a sound button (quiet by default), and never
+  shows YouTube's own controls. Settings → Home layout also chooses what the banner features:
+  the rows, Continue Watching, or your watchlist.
+- **Home takes its colour from the banner**, carried down the page and into the navigation bar.
+- **Navigation on the left or across the top** (Settings → Appearance).
+- **Player:** button names show at once on hover; Speed, Picture, Picture in picture, Playback
+  info and Keyboard shortcuts moved into one More menu; the episode list has a season picker,
+  opens on the episode that is playing and shows each episode's description. The title page uses
+  the same season picker when a show has more than six seasons.
+
+**Fixed**
+- Side panels (episodes, sources) could not be scrolled: the panel grew taller than the window.
+- Trakt sign-in follows Trakt's current system (its sign-in host, no app secret).
+- Backups include the assistant and MDBList keys when keys are included.
+
+**Changed**
+- One version number for the app, the page and the installer (`shell/Cargo.toml`).
+- The installer waits for ROVE to close during an update instead of giving up, and reopens it.
+- GPL-3.0 licence, a privacy note (PRIVACY.md) and credits added.
+
+**Checked**
+- Typecheck; 316 unit tests in the page, 4 in the shell (including that an update with a wrong
+  or missing signature is refused).
+- A test copy of the built app on a copy of a real synced history: the made-for-you rows appear
+  under Continue Watching in order; the banner's trailer plays and fades into the page colour
+  with no edge; the navigation bar takes the colour; the player shows its picture with the
+  shorter control bar and More menu. Windows Defender scans the build clean.
+- In the browser build: list import with public Trakt lists read for real; MDBList with stand-in
+  answers; the assistant's screens against a stand-in service; top navigation; the page colour.
+- Trakt's sign-in host answered a device-code request made with ROVE's app id.
+- Not checked: a real assistant key; Trakt, MDBList or media-server accounts; the update
+  download and install against a published release (checked after this release exists).
+
+**Note**
+- An earlier form of the updater made Windows Defender's machine-learning check flag ROVE itself
+  (it started the installer with "silent" switches, which reads as a dropper). The app now passes
+  only an update marker and the installer makes itself quiet. Unsigned builds can still be
+  flagged by such checks; code signing is the lasting answer.
+
 ### 2026-11-25 — Audit and repair
 
 The whole app was read for defects and the findings were worked through. The lists, with the

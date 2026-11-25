@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { Download, FolderOpen, Trash2, Upload } from 'lucide-react';
+import { Download, FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { useUpdate } from '../../lib/update';
 import { readBackup, restoreBackup, saveBackup } from '../../lib/backup';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidate } from '../../lib/http';
@@ -159,6 +160,48 @@ export function DataSection() {
   );
 }
 
+const megabytes = (n: number) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+
+/** Check for a newer release and install it without leaving the app. */
+function UpdateRow() {
+  const { status, release, error, received, total, checkedAt } = useUpdate();
+  const check = useUpdate((s) => s.check);
+  const install = useUpdate((s) => s.install);
+  const busy = status === 'checking' || status === 'downloading' || status === 'installing';
+  const hint =
+    status === 'available' && release
+      ? `Version ${release.version} is ready to install. ROVE closes, updates and opens again; nothing you set up changes.`
+      : status === 'downloading'
+        ? total > 0
+          ? `Downloading ${megabytes(received)} of ${megabytes(total)}`
+          : 'Downloading'
+        : status === 'installing'
+          ? 'Installing. ROVE will reopen in a moment'
+          : status === 'checking'
+            ? 'Checking'
+            : status === 'error'
+              ? (error ?? 'Could not check for updates.')
+              : status === 'current'
+                ? `You have the latest version${checkedAt ? ` (checked ${new Date(checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : ''}`
+                : 'ROVE also looks for a new version when it starts';
+  return (
+    <>
+      <SettingRow label="Updates" hint={hint}>
+        {status === 'available' || status === 'downloading' || status === 'installing' ? (
+          <Button variant="primary" icon={<Download size={16} />} disabled={busy} onClick={() => void install()}>
+            {status === 'available' ? `Update to ${release?.version}` : 'Updating'}
+          </Button>
+        ) : (
+          <Button variant="secondary" icon={<RefreshCw size={16} />} disabled={busy} onClick={() => void check()}>
+            Check for updates
+          </Button>
+        )}
+      </SettingRow>
+      {status === 'available' && release?.notes && <p className="about__notes">{release.notes}</p>}
+    </>
+  );
+}
+
 export function AboutSection() {
   return (
     <Group>
@@ -169,6 +212,7 @@ export function AboutSection() {
           <p className="about__version">Version {__APP_VERSION__}</p>
         </div>
       </div>
+      <UpdateRow />
       <SettingRow label="Playback" hint="mpv (libmpv) with Direct3D 11 and libplacebo" />
       <SettingRow label="Window and page" hint="Rust with tao and wry on Microsoft Edge WebView2" />
       <SettingRow label="Metadata" hint="Your addons, plus TMDB when a key is set. This product uses the TMDB API but is not endorsed or certified by TMDB." />

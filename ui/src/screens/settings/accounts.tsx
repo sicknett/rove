@@ -9,6 +9,7 @@ import { BUILT_IN_TMDB_KEY, useKeys } from '../../state/keys';
 import { checkTmdbKey } from '../../meta/tmdb';
 import { Button, Segmented, TextField } from '../../ui/controls';
 import { toast } from '../../ui/toast';
+import { AssistantCard } from '../../ai/AssistantCard';
 import { Group, SettingRow } from './parts';
 
 function ago(ms: number | null) {
@@ -23,6 +24,7 @@ export function AccountsSection() {
   return (
     <>
       <TrackerCard />
+      <AssistantCard />
       <TmdbCard />
     </>
   );

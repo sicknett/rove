@@ -19,7 +19,8 @@ interface Backup {
   addons: Pick<InstalledAddon, 'url' | 'enabled' | 'disabledResources' | 'manifest' | 'addedAt'>[];
   profiles: { profiles: Profile[]; autoOpenLast?: boolean };
   perProfile: Record<string, Partial<Record<(typeof PER_PROFILE)[number], unknown>> & { pmdbKey?: string; tracker?: unknown }>;
-  keys?: { tmdbApiKey?: string | null };
+  /** The whole keys document: TMDB key, MDBList key, the AI assistant's provider and key. */
+  keys?: { tmdbApiKey?: string | null; mdblistApiKey?: string | null; ai?: unknown };
   servers?: unknown;
 }
 
@@ -50,7 +51,8 @@ export async function makeBackup(includeKeys: boolean): Promise<Backup> {
     perProfile,
   };
   if (includeKeys) {
-    backup.keys = { tmdbApiKey: (await secrets.read<{ tmdbApiKey?: string }>('keys').catch(() => null))?.tmdbApiKey ?? null };
+    const keys = await secrets.read<{ tmdbApiKey?: string | null; mdblistApiKey?: string | null; ai?: unknown }>('keys').catch(() => null);
+    backup.keys = { tmdbApiKey: keys?.tmdbApiKey ?? null, mdblistApiKey: keys?.mdblistApiKey ?? null, ai: keys?.ai ?? null };
     const servers = await secrets.read('servers').catch(() => null);
     if (servers) backup.servers = servers;
   }
@@ -108,7 +110,16 @@ export async function restoreBackup(b: Backup): Promise<RestoreSummary> {
     if (entry.tracker) await secrets.write(`tracker-${id}`, entry.tracker);
     else if (entry.pmdbKey) await secrets.write(`pmdb-${id}`, { apiKey: entry.pmdbKey });
   }
-  if (b.keys?.tmdbApiKey) await secrets.write('keys', { tmdbApiKey: b.keys.tmdbApiKey });
+  // Every key the backup holds goes back; one it does not hold is left as it is on this PC.
+  if (b.keys && (b.keys.tmdbApiKey || b.keys.mdblistApiKey || b.keys.ai)) {
+    const here = await secrets.read<Record<string, unknown>>('keys').catch(() => null);
+    await secrets.write('keys', {
+      ...(here ?? {}),
+      ...(b.keys.tmdbApiKey ? { tmdbApiKey: b.keys.tmdbApiKey } : {}),
+      ...(b.keys.mdblistApiKey ? { mdblistApiKey: b.keys.mdblistApiKey } : {}),
+      ...(b.keys.ai ? { ai: b.keys.ai } : {}),
+    });
+  }
   if (b.servers) await secrets.write('servers', b.servers);
   await docs.write('onboarded', true);
   // The page reloads next; nothing from the old setup may save over the restored files.

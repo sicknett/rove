@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, AudioLines, Captions, Gauge, Info, Keyboard, ListVideo, Maximize, Minimize, MonitorPlay, Pause, Play, RotateCcw, RotateCw, SkipForward, Rows3, Volume1, Volume2, VolumeX, PictureInPicture2,
+  ArrowLeft, AudioLines, Captions, ChevronRight, Gauge, MoreHorizontal, Info, Keyboard, ListVideo, Maximize, Minimize, MonitorPlay, Pause, Play, RotateCcw, RotateCw, SkipForward, Rows3, Volume1, Volume2, VolumeX, PictureInPicture2,
 } from 'lucide-react';
 import { appWindow, mpv, send, subscribe } from '../bridge';
 import { useSettings, settingsNow } from '../state/settings';
@@ -9,7 +9,7 @@ import { episodesOf } from '../data/hooks';
 import { watchKey } from '../addons/ids';
 import { useHistory } from '../state/history';
 import { Img } from '../ui/Img';
-import { Button, Dialog, ProgressLine, Sheet } from '../ui/controls';
+import { Button, Dialog, ProgressLine, Select, Sheet } from '../ui/controls';
 import { formatTime } from '../format';
 import { AudioMenu, SpeedMenu, SubtitleMenu, VideoMenu } from './Menus';
 import { Scrubber } from './Scrubber';
@@ -23,7 +23,7 @@ import type { EpisodeRef } from '../library/continue';
 import { toast } from '../ui/toast';
 import { setPip, usePip } from './pip';
 
-type MenuName = 'audio' | 'subs' | 'speed' | 'video' | null;
+type MenuName = 'audio' | 'subs' | 'speed' | 'video' | 'more' | null;
 const HIDE_AFTER_MS = 2800;
 
 export function Player() {
@@ -349,6 +349,7 @@ export function Player() {
     poke();
   };
 
+  const moreOpen = menu === 'more' || menu === 'speed' || menu === 'video';
   const t = session.target;
   const epLabel = t.type === 'series' && t.season !== undefined ? `S${t.season} E${t.episode}${t.episodeTitle ? ` · ${t.episodeTitle}` : ''}` : undefined;
 
@@ -362,7 +363,7 @@ export function Player() {
       {!pip && <TitleBar overVideo visible={shown} />}
 
       <div className="player__top">
-        <button className="icon-btn icon-btn--lg" aria-label="Back" onClick={exit}>
+        <button className="icon-btn icon-btn--lg" aria-label="Back" data-tip="Back (Backspace)" data-tip-below onClick={exit}>
           <ArrowLeft size={22} />
         </button>
         <div className="player__heading">
@@ -412,19 +413,19 @@ export function Player() {
           <Scrubber segments={segments} />
           <div className="controls-row">
             <div className="controls-row__group">
-              <button className="icon-btn icon-btn--play" aria-label={pause ? 'Play' : 'Pause'} title={pause ? 'Play (Space)' : 'Pause (Space)'} onClick={togglePause}>
+              <button className="icon-btn icon-btn--play" aria-label={pause ? 'Play' : 'Pause'} data-tip={pause ? 'Play (Space)' : 'Pause (Space)'} onClick={togglePause}>
                 {pause ? <Play size={26} fill="currentColor" strokeWidth={0} /> : <Pause size={26} fill="currentColor" strokeWidth={0} />}
               </button>
-              <button className="icon-btn" aria-label="Back 10 seconds" title="Back (←)" onClick={() => seekBy(-settingsNow().playback.seekStepSec)}>
+              <button className="icon-btn" aria-label="Back 10 seconds" data-tip="Back (←)" onClick={() => seekBy(-settingsNow().playback.seekStepSec)}>
                 <RotateCcw size={21} />
                 <span className="icon-btn__badge">{settingsNow().playback.seekStepSec}</span>
               </button>
-              <button className="icon-btn" aria-label="Forward 10 seconds" title="Forward (→)" onClick={() => seekBy(settingsNow().playback.seekStepSec)}>
+              <button className="icon-btn" aria-label="Forward 10 seconds" data-tip="Forward (→)" onClick={() => seekBy(settingsNow().playback.seekStepSec)}>
                 <RotateCw size={21} />
                 <span className="icon-btn__badge">{settingsNow().playback.seekStepSec}</span>
               </button>
               {next && (
-                <button className="icon-btn" aria-label="Next episode" title="Next episode (N)" onClick={() => void playNext(false)}>
+                <button className="icon-btn" aria-label="Next episode" data-tip="Next episode (N)" onClick={() => void playNext(false)}>
                   <SkipForward size={21} fill="currentColor" strokeWidth={1.5} />
                 </button>
               )}
@@ -432,35 +433,48 @@ export function Player() {
             </div>
             <div className="controls-row__group">
               {t.type === 'series' && session.meta && (
-                <button className={`icon-btn ${panel === 'episodes' ? 'is-active' : ''}`} aria-label="Episodes" title="Episodes" onClick={() => setPanel('episodes')}>
+                <button className={`icon-btn ${panel === 'episodes' ? 'is-active' : ''}`} aria-label="Episodes" data-tip="Episodes" onClick={() => setPanel('episodes')}>
                   <Rows3 size={21} />
                 </button>
               )}
-              <button className="icon-btn" aria-label="Sources" title="Sources" onClick={openSwitcher}>
+              <button className="icon-btn" aria-label="Sources" data-tip="Sources" onClick={openSwitcher}>
                 <ListVideo size={21} />
               </button>
-              <MenuButton name="video" label="Picture" open={menu} setOpen={setMenu} icon={<MonitorPlay size={21} />}>
-                <VideoMenu />
-              </MenuButton>
-              <MenuButton name="speed" label="Speed" open={menu} setOpen={setMenu} icon={<Gauge size={21} />}>
-                <SpeedMenu />
+              <MenuButton name="subs" label="Subtitles" tip="Subtitles (C)" open={menu} setOpen={setMenu} icon={<Captions size={22} />}>
+                <SubtitleMenu />
               </MenuButton>
               <MenuButton name="audio" label="Audio" open={menu} setOpen={setMenu} icon={<AudioLines size={21} />}>
                 <AudioMenu />
               </MenuButton>
-              <MenuButton name="subs" label="Subtitles" open={menu} setOpen={setMenu} icon={<Captions size={22} />}>
-                <SubtitleMenu />
-              </MenuButton>
-              <button className={`icon-btn${stats ? ' is-active' : ''}`} aria-label="Playback info" title="Playback info (I)" onClick={() => setStats((v) => !v)}>
-                <Info size={20} />
-              </button>
-              <button className="icon-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(true)}>
-                <Keyboard size={20} />
-              </button>
-              <button className={`icon-btn ${pip ? 'is-active' : ''}`} aria-label="Picture in picture" title="Picture in picture (P)" onClick={() => setPip(!pip)}>
-                <PictureInPicture2 size={20} />
-              </button>
-              <button className="icon-btn" aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} title="Full screen (F)" onClick={() => appWindow.fullscreen()}>
+              {/* Everything used less often sits behind one button; Speed and Picture open in its place. */}
+              <div className="menu-anchor">
+                <button
+                  className={`icon-btn${moreOpen ? ' is-active' : ''}`}
+                  aria-label="More"
+                  data-tip="More: speed, picture, info"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMenu(moreOpen ? null : 'more')}
+                >
+                  <MoreHorizontal size={22} />
+                </button>
+                {menu === 'more' && (
+                  <MoreMenu
+                    stats={stats}
+                    open={(m) => setMenu(m)}
+                    onStats={() => (setStats((v) => !v), setMenu(null))}
+                    onHelp={() => (setHelp(true), setMenu(null))}
+                    onPip={() => (setPip(true), setMenu(null))}
+                  />
+                )}
+                {menu === 'speed' && <SpeedMenu />}
+                {menu === 'video' && <VideoMenu />}
+              </div>
+              {pip && (
+                <button className="icon-btn is-active" aria-label="Leave picture in picture" data-tip="Leave picture in picture (P)" onClick={() => setPip(false)}>
+                  <PictureInPicture2 size={20} />
+                </button>
+              )}
+              <button className="icon-btn" aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} data-tip="Full screen (F)" onClick={() => appWindow.fullscreen()}>
                 {fullscreen ? <Minimize size={21} /> : <Maximize size={21} />}
               </button>
             </div>
@@ -693,21 +707,34 @@ function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => 
   const watched = useHistory((s) => s.watched);
   const list = eps.filter((e) => e.season === season).sort((a, b) => a.episode - b.episode);
   const now = Date.now();
+  const listRef = useRef<HTMLUListElement>(null);
+  // Opens on the episode that is playing; another season starts at its top.
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>('.ep-item.is-current');
+    if (el) el.scrollIntoView({ block: 'center' });
+    else listRef.current?.parentElement?.scrollTo({ top: 0 });
+  }, [season]);
+  const count = `${list.length} episode${list.length === 1 ? '' : 's'}`;
+  // One season picker that never runs off the panel, however many seasons there are.
+  const picker =
+    seasons.length > 1 ? (
+      <span className="ep-seasons">
+        <Select value={season} label="Season" onChange={setSeason} options={seasons.map((s) => ({ value: s, label: seasonName(s), detail: `${eps.filter((e) => e.season === s).length} episodes` }))} />
+        <span className="ep-seasons__count">{count}</span>
+      </span>
+    ) : (
+      count
+    );
   return (
-    <Sheet open onClose={onClose} title={session.target.name} subtitle={seasonName(season)} width={520}>
-      <div className="chips chips--scroll">
-        {seasons.map((s) => (
-          <button key={s} className={`chip chip--sm ${s === season ? 'is-on' : ''}`} onClick={() => setSeason(s)}>
-            {seasonName(s)}
-          </button>
-        ))}
-      </div>
-      <ul className="ep-list">
+    <Sheet open onClose={onClose} title={session.target.name} subtitle={picker} width={540}>
+      <ul className="ep-list" ref={listRef}>
         {list.map((e) => {
           const key = watchKey(session.target.metaId, e.season, e.episode);
           const current = e.season === session.target.season && e.episode === session.target.episode;
           const upcoming = e.released ? Date.parse(e.released) > now : false;
           const p = progress[key];
+          const video = session.meta?.videos?.find((v) => v.id === e.id);
+          const overview = video?.overview ?? video?.description;
           return (
             <li key={e.id}>
               <button
@@ -731,6 +758,7 @@ function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => 
                     {e.episode}. {e.title ?? `Episode ${e.episode}`}
                   </span>
                   <span className="ep-item__sub">{current ? 'Playing now' : upcoming ? `Airs ${new Date(Date.parse(e.released!)).toLocaleDateString()}` : watched[key] ? 'Watched' : p ? `${formatTime(p.durationS - p.positionS)} left` : ''}</span>
+                  {overview && <span className="ep-item__overview">{overview}</span>}
                 </span>
               </button>
             </li>
@@ -762,11 +790,39 @@ function ErrorPanel({ session, error, onExit }: { session: Session; error: strin
   );
 }
 
-function MenuButton(props: { name: Exclude<MenuName, null>; label: string; icon: React.ReactNode; open: MenuName; setOpen: (m: MenuName) => void; children: React.ReactNode }) {
+const ASPECT_NAMES: Record<string, string> = { fit: 'Fit', fill: 'Fill', zoom: 'Zoom' };
+
+/** The less-used controls, by name. Speed and Picture open their own menus in this one's place. */
+function MoreMenu({ stats, open, onStats, onHelp, onPip }: { stats: boolean; open: (m: 'speed' | 'video') => void; onStats: () => void; onHelp: () => void; onPip: () => void }) {
+  const speed = usePlayer((s) => s.speed);
+  const aspect = usePlayer((s) => s.aspect);
+  const row = (icon: React.ReactNode, label: string, detail: string, onClick: () => void, more = false) => (
+    <button className="menu__item menu__item--nav" role="menuitem" onClick={onClick}>
+      <span className="menu__check menu__check--icon">{icon}</span>
+      <span className="menu__label">{label}</span>
+      <span className="menu__value">
+        {detail}
+        {more && <ChevronRight size={15} />}
+      </span>
+    </button>
+  );
+  return (
+    <div className="menu menu--more" role="menu" onPointerDown={(e) => e.stopPropagation()}>
+      {row(<Gauge size={17} />, 'Speed', speed === 1 ? 'Normal' : `${speed}×`, () => open('speed'), true)}
+      {row(<MonitorPlay size={17} />, 'Picture', ASPECT_NAMES[aspect] ?? aspect, () => open('video'), true)}
+      <div className="menu__divider" />
+      {row(<PictureInPicture2 size={17} />, 'Picture in picture', 'P', onPip)}
+      {row(<Info size={17} />, 'Playback info', stats ? 'On' : 'I', onStats)}
+      {row(<Keyboard size={17} />, 'Keyboard shortcuts', '?', onHelp)}
+    </div>
+  );
+}
+
+function MenuButton(props: { name: Exclude<MenuName, null>; label: string; tip?: string; icon: React.ReactNode; open: MenuName; setOpen: (m: MenuName) => void; children: React.ReactNode }) {
   const isOpen = props.open === props.name;
   return (
     <div className="menu-anchor">
-      <button className={`icon-btn${isOpen ? ' is-active' : ''}`} aria-label={props.label} title={props.label} aria-expanded={isOpen} onClick={() => props.setOpen(isOpen ? null : props.name)}>
+      <button className={`icon-btn${isOpen ? ' is-active' : ''}`} aria-label={props.label} data-tip={props.tip ?? props.label} aria-expanded={isOpen} onClick={() => props.setOpen(isOpen ? null : props.name)}>
         {props.icon}
       </button>
       {isOpen && props.children}
@@ -781,7 +837,7 @@ function VolumeControl({ onChange }: { onChange: (v: number) => void }) {
   const Icon = level === 0 ? VolumeX : level < 50 ? Volume1 : Volume2;
   return (
     <div className="volume">
-      <button className="icon-btn" aria-label={mute ? 'Unmute' : 'Mute'} title="Mute (M)" onClick={() => mpv.set('mute', !mute)}>
+      <button className="icon-btn" aria-label={mute ? 'Unmute' : 'Mute'} data-tip="Mute (M)" onClick={() => mpv.set('mute', !mute)}>
         <Icon size={22} />
       </button>
       <input

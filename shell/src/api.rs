@@ -18,6 +18,7 @@ use wry::http::{Request, Response};
 pub struct Api {
     store_dir: PathBuf,
     secret_dir: PathBuf,
+    data_dir: PathBuf,
     agent: ureq::Agent,
 }
 
@@ -82,7 +83,7 @@ impl Api {
             .user_agent(concat!("ROVE/", env!("CARGO_PKG_VERSION")))
             .redirects(8)
             .build();
-        Self { store_dir: data_dir.join("store"), secret_dir: data_dir.join("secrets"), agent }
+        Self { store_dir: data_dir.join("store"), secret_dir: data_dir.join("secrets"), data_dir: data_dir.to_path_buf(), agent }
     }
 
     /// Whether this request is for the service rather than the page's files.
@@ -102,6 +103,17 @@ impl Api {
             ("GET", ("secret", name)) => self.read_doc(&self.secret_dir, name, true),
             ("PUT", ("secret", name)) => self.write_doc(&self.secret_dir, name, request.body(), true),
             ("DELETE", ("secret", name)) => self.delete_doc(&self.secret_dir, name, true),
+            ("POST", ("update", "download")) => match serde_json::from_slice::<crate::update::Wanted>(request.body()) {
+                Ok(wanted) => match crate::update::download(&self.data_dir, &self.agent, &wanted) {
+                    Ok(()) => json_response(200, &json!({ "ok": true })),
+                    Err(error) => json_response(200, &json!({ "ok": false, "error": error })),
+                },
+                Err(_) => text_response(400, "bad request"),
+            },
+            ("GET", ("update", "progress")) => {
+                let (received, total, ready) = crate::update::progress();
+                json_response(200, &json!({ "received": received, "total": total, "ready": ready }))
+            }
             _ => text_response(404, "unknown endpoint"),
         }
     }

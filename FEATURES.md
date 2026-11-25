@@ -35,7 +35,9 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 
 ## 3. Home
 - [x] Featured banner: rotating titles with backdrop, logo art, rating, year, genres, overview, Play, Details, Watchlist
-- [~] Muted trailers in the banner while the pointer rests on it (needs a TMDB key)
+- [x] Banner trailers the way streaming services do it: fades in over the art, text steps aside, moves on when it ends; starts by itself or on hover; sound button; no YouTube controls
+- [x] Banner source: the rows, Continue Watching or the watchlist
+- [x] Home takes its colour from the banner, carried into the navigation bar
 - [x] Continue Watching: resume points plus the next aired episode, newest first, wide cards with logo art
 - [~] Remove from Continue Watching (with undo); mark watched from the card menu
 - [x] A row per catalog, loaded as it scrolls into view, paging further on scroll
@@ -43,6 +45,9 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] When the metadata addon keeps its catalogs off Home (collection-based setups), Home says why and offers Import collection and Discover
 - [x] Home layout editor: turn rows on or off, rename, reorder, choose banner sources, edit a collection's folders, reset
 - [x] Row menu on Home (⋯ or right-click the header): move up or down, hide, edit folders
+- [x] Rows made for you from your history: Top picks, Because you watched, Trending, numbered Top 10s, New releases, genre rows, Hidden gems, From your watchlist; "Not interested"; one switch for all (seen with a real synced history; ranking quality is for the user to judge)
+- [~] Lists as rows or folders from Trakt, MDBList and media servers (public Trakt lists read for real; accounts not yet)
+- [~] "For you" row from the AI assistant, refreshed at most daily (stand-in service only)
 - [x] Card hover lift and art; keyboard focus rings; right-click menus
 - [x] "See all" opens the full catalog
 
@@ -51,6 +56,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Search every catalog that supports it, debounced, grouped by type, recent searches
 - [~] Open an IMDb or TMDB id directly from Search
 - [~] Ctrl+K or / to search from anywhere; Alt+←/→ and mouse back/forward buttons
+- [~] Ask: describe what you want in plain words and get real titles with reasons (Claude, Gemini or an OpenAI-compatible key; stand-in service only so far)
 
 ## 5. Title page
 - [x] Backdrop, logo art, rating, year, runtime, age rating, genres, tagline, overview
@@ -82,7 +88,8 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [~] Next episode card at the credits (or a set time before the end) with countdown; next sources fetched at 80 %
 - [~] "Are you still watching?" after N episodes without input
 - [~] Skip intro, recap and credits: chapter names, TheIntroDB, IntroDB, PublicMetaDB, AniSkip; button or automatic (merging unit tested)
-- [~] Episode list and source switcher inside the player
+- [~] Episode list (season picker, descriptions, opens on the playing episode) and source switcher inside the player
+- [x] Button names at once on hover; less-used controls in one More menu
 - [~] Subtitles from subtitle addons added as tracks
 - [x] Track choice: the show's remembered choice, then preferred languages; forced / foreign-audio / always / off (unit tested)
 - [~] Subtitle style: size, colour, outline, shadow or box, bold, position, live preview
@@ -108,7 +115,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [~] Choose a tracker per profile, like Strand: PublicMetaDB, Trakt, Simkl or MDBList (or none)
 - [~] Trakt (device code sign-in, token renewal, rewatch resets) and Simkl (device sign-in, PIN fallback); MDBList (API key). Trakt and Simkl need ROVE's app ids in the build
 - [x] Backups carry tracker sign-ins and media servers (when keys are included)
-- [ ] Trakt lists as collection sources
+- [~] Trakt lists as collection sources (public lists read for real)
 
 ## 9. Library and calendar
 - [x] Library: Watchlist (sort, filter), Continue Watching, History, Collections (import, reorder, delete)
@@ -117,6 +124,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 ## 10. Settings
 - [x] Accounts, Addons, Home layout, Playback, Sources, Languages & subtitles, Audio, Appearance, Profiles, Data, About
 - [x] Accent colours, poster size, ratings on posters, reduce motion
+- [x] Navigation on the left or across the top
 - [~] Open the logs and screenshots folders; clear cache; clear local history (with confirmation)
 
 ## 11. App
@@ -131,4 +139,4 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Portable build with Start menu and Desktop shortcuts
 - [x] Installer: per-user Setup.exe (no admin), Start menu and optional desktop shortcut, Apps list uninstaller, WebView2 check, updates in place keeping your data, uninstall asks before removing data (install, upgrade and uninstall checked silently)
 - [ ] Code signing (no SmartScreen warning)
-- [ ] Automatic updates
+- [~] Updates from inside the app: check at start and in Settings → About, signed download, install and reopen (signature checks unit tested; the full round trip is checked against the first published release)

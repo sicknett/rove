@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Check, Play, Star } from 'lucide-react';
 import { Img } from '../ui/Img';
-import { ProgressLine } from '../ui/controls';
+import { ProgressLine, type MenuItem } from '../ui/controls';
 import { navigate } from '../nav/router';
 import { openContextMenu } from '../ui/contextmenu';
 import { titleMenu, type CardTitle } from './actions';
@@ -33,10 +33,12 @@ interface PosterProps {
   continueKey?: string;
   season?: number;
   episode?: number;
+  /** More entries for the card's menu, after the usual ones (a recommendation's "Not interested"). Asked for when the menu opens. */
+  menuExtra?: () => (MenuItem | 'divider')[];
 }
 
 /** A 2:3 poster with title below; watched tick and progress when known. */
-export const PosterCard = memo(function PosterCard({ title, progress, onPlay, subtitle, continueKey, season, episode }: PosterProps) {
+export const PosterCard = memo(function PosterCard({ title, progress, onPlay, subtitle, continueKey, season, episode, menuExtra }: PosterProps) {
   // History keeps a title under its IMDb id when that is known; a card may carry its `tmdb:` id.
   const watched = useHistory((s) => title.type === 'movie' && !!s.watched[canonicalNow(title.metaId, 'movie')]);
   const inList = useInWatchlist(title.metaId, title.type);
@@ -46,7 +48,7 @@ export const PosterCard = memo(function PosterCard({ title, progress, onPlay, su
   const plays = !!continueKey && !!onPlay;
   const sub = subtitle ?? (title.year ? String(title.year).slice(0, 9) : undefined);
   return (
-    <div className="card card--poster" onContextMenu={(e) => openContextMenu(e, titleMenu(title, { onPlay, continueKey, season, episode }))}>
+    <div className="card card--poster" onContextMenu={(e) => openContextMenu(e, [...titleMenu(title, { onPlay, continueKey, season, episode }), ...(menuExtra?.() ?? [])])}>
       <button className="card__frame" onClick={plays ? onPlay : open} aria-label={plays ? `Play ${title.name ?? ''} ${subtitle ?? ''}` : title.name}>
         <Img src={title.poster} alt="" className="card__img" fallback={<Monogram name={title.name} />} />
         <span className="card__shine" aria-hidden />

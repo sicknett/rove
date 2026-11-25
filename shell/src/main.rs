@@ -4,6 +4,7 @@
 //! draws everything else on top of it. The page drives mpv through a small JSON bridge.
 
 mod api;
+mod update;
 mod dpapi;
 mod logging;
 mod media;
@@ -38,6 +39,8 @@ enum UserEvent {
     Video(bool),
     /// The page has saved everything; the app can close.
     CloseReady,
+    /// Close the usual way, then run the downloaded Setup.
+    InstallUpdate,
     NowPlaying(media::NowPlaying),
     /// Self-test: logs the window, video and page sizes under a label.
     Probe(&'static str),
@@ -73,6 +76,8 @@ enum Inbound {
     OpenExternal { url: String },
     OpenExternalPlayer { url: String, player: String },
     Log { message: String },
+    /// Close, run the update that was downloaded and checked, and open again.
+    InstallUpdate,
 }
 
 const SETTABLE: &[&str] = &[
@@ -509,6 +514,7 @@ fn handle(message: Inbound, mpv: &mpv::Mpv, user_off: &mpv::AudioRecoveryHandle,
         Inbound::Pip { value } => send(UserEvent::Pip(value)),
         Inbound::Video { visible } => send(UserEvent::Video(visible)),
         Inbound::CloseReady => send(UserEvent::CloseReady),
+        Inbound::InstallUpdate => send(UserEvent::InstallUpdate),
         Inbound::NowPlaying(np) => send(UserEvent::NowPlaying(np)),
         Inbound::OpenFolder { which } => {
             let dir = data_dir();
@@ -685,6 +691,7 @@ fn main() {
     let mut remaximize = false;
     let mut last_state = Value::Null;
     let mut pip_restore: Option<PipRestore> = None;
+    let mut pending_update: Option<PathBuf> = None;
     let mut placement = saved.unwrap_or(Placement { x: 0, y: 0, width: 1440.0, height: 900.0, maximized: false });
     // Closing asks the page to save first; it gets two seconds.
     let mut closing_deadline: Option<std::time::Instant> = None;
@@ -737,6 +744,14 @@ fn main() {
             }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => begin_close = true,
             Event::UserEvent(UserEvent::CloseReady) => *control_flow = ControlFlow::Exit,
+            Event::UserEvent(UserEvent::InstallUpdate) => match update::ready() {
+                // Everything is saved the usual way first; Setup starts as the last thing on the way out.
+                Some(setup) => {
+                    pending_update = Some(setup);
+                    begin_close = true;
+                }
+                None => log::warn!("update: nothing downloaded to install"),
+            },
             Event::UserEvent(UserEvent::NowPlaying(np)) => {
                 if let Some(c) = &controls {
                     c.update(&np);
@@ -855,6 +870,9 @@ fn main() {
             Event::LoopDestroyed => {
                 log::info!("closing");
                 save_placement(&dir, &placement);
+                if let Some(setup) = pending_update.take() {
+                    update::run_setup(&setup);
+                }
                 let _ = mpv.command(&["quit"]);
                 if mpv_done.recv_timeout(Duration::from_millis(1500)).is_ok() {
                     mpv.destroy();

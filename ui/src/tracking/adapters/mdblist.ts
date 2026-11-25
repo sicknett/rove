@@ -156,3 +156,196 @@ export const mdblistAdapter: TrackerAdapter = {
     await call(account, 'POST', '/watchlist/items/remove', t.type === 'movie' ? { movies: [ids] } : { shows: [ids] });
   },
 };
+
+// ---------- Lists ----------
+//
+// Everything here takes the API key itself, so lists work with the key of a connected MDBList
+// tracker or with one kept only for lists. Paths and parameters follow MDBList's API reference
+// (api.mdblist.com/docs, the Lists group); where it leaves a response shape open (the unified
+// item list, the paging object) the answer is read defensively.
+
+/** An MDBList list as the pickers show it. */
+export interface MdbList {
+  id: number;
+  name: string;
+  slug?: string;
+  owner?: string;
+  description?: string;
+  /** `movie` or `show`; empty for a list of both. */
+  mediatype?: string;
+  itemCount?: number;
+  likes?: number;
+}
+
+interface RawMdbList {
+  id?: number;
+  name?: string;
+  slug?: string | null;
+  user_name?: string;
+  description?: string | null;
+  mediatype?: string | null;
+  items?: number | null;
+  likes?: number | null;
+}
+
+function mdbListFrom(l: RawMdbList | null | undefined): MdbList | null {
+  const id = Number(l?.id);
+  if (!l || !l.name || !(id > 0)) return null;
+  return { id, name: l.name, slug: l.slug || undefined, owner: l.user_name || undefined, description: l.description || undefined, mediatype: l.mediatype || undefined, itemCount: l.items ?? undefined, likes: l.likes ?? undefined };
+}
+
+async function mdbLists(apiKey: string, path: string): Promise<MdbList[]> {
+  const { data } = await call<RawMdbList[] | { lists?: RawMdbList[] }>({ provider: 'mdblist', apiKey }, 'GET', path);
+  const raw = Array.isArray(data) ? data : data?.lists;
+  // Anything but a list of lists is a failed read, not "no lists".
+  if (!Array.isArray(raw)) throw new TrackerError('retry', 'MDBList sent an answer that could not be read.');
+  return raw.map(mdbListFrom).filter((l): l is MdbList => !!l);
+}
+
+/** The lists of the account the key belongs to. */
+export const mdblistMyLists = (apiKey: string) => mdbLists(apiKey, '/lists/user');
+
+/** MDBList's most popular public lists, in the order of its Top Lists page. */
+export const mdblistTopLists = (apiKey: string, limit = 40) => mdbLists(apiKey, `/lists/top?limit=${limit}`);
+
+/** Public lists by name. */
+export const mdblistSearchLists = (apiKey: string, query: string, limit = 40) => mdbLists(apiKey, `/lists/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+
+/** What identifies a list to read: its number, its owner and slug, or the key's own watchlist. */
+export interface MdbListRef {
+  id?: number;
+  user?: string;
+  slug?: string;
+  watchlist?: boolean;
+}
+
+/**
+ * A list from what a user pasted: an mdblist.com link (`/lists/<user>/<slug>`), a bare number, or
+ * `user/slug`. Null when it is none of these.
+ */
+export function parseMdblistLink(text: string): MdbListRef | null {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) return { id: Number(t) };
+  const path = t.replace(/^https?:\/\/[^/]*mdblist\.com/i, '').split(/[?#]/)[0];
+  const linked = /^\/?lists\/([^/]+)\/([^/]+)/i.exec(path);
+  if (linked) return { user: decodeURIComponent(linked[1]), slug: decodeURIComponent(linked[2]) };
+  const bare = /^([\w.-]+)\/([\w.-]+)$/.exec(t);
+  return bare ? { user: bare[1], slug: bare[2] } : null;
+}
+
+const refPath = (ref: MdbListRef) => (ref.id ? `/lists/${ref.id}` : ref.user && ref.slug ? `/lists/${encodeURIComponent(ref.user)}/${encodeURIComponent(ref.slug)}` : null);
+
+/** A list's name, number and size, for a pasted link. Null when MDBList has no such list. */
+export async function mdblistListInfo(apiKey: string, ref: MdbListRef): Promise<MdbList | null> {
+  const path = refPath(ref);
+  if (!path) return null;
+  try {
+    const { data } = await call<RawMdbList | RawMdbList[]>({ provider: 'mdblist', apiKey }, 'GET', path);
+    // Older answers wrap the one list in an array.
+    return mdbListFrom(Array.isArray(data) ? data[0] : data);
+  } catch (e) {
+    if (e instanceof TrackerError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Orders MDBList sorts list items by. */
+const MDB_SORTS = new Set(['rank', 'score', 'usort', 'score_average', 'released', 'releasedigital', 'imdbrating', 'imdbvotes', 'last_air_date', 'imdbpopular', 'tmdbpopular', 'rogerebert', 'rtomatoes', 'rtaudience', 'metacritic', 'myanimelist', 'letterrating', 'lettervotes', 'budget', 'revenue', 'runtime', 'title', 'sort_title', 'added', 'random']);
+
+export interface MdbItemsQuery {
+  /** Movies only or shows only; both when left out. */
+  media?: 'movie' | 'show';
+  sortBy?: string;
+  sortHow?: string;
+  /** How many titles came before this page. */
+  offset: number;
+  limit: number;
+}
+
+export interface MdbListTitle {
+  metaId: string;
+  type: 'movie' | 'series';
+  name: string;
+  year?: number;
+  tmdbId?: number;
+  /** A link or a TMDB image path, as MDBList sent it (asked for with `append_to_response=poster`). */
+  poster?: string;
+}
+
+interface RawMdbItem {
+  id?: number;
+  rank?: number | null;
+  title?: string;
+  mediatype?: string;
+  release_year?: number | null;
+  imdb_id?: string | null;
+  tmdb_id?: number | null;
+  ids?: Ids;
+  poster?: string | null;
+}
+
+interface MdbItemsAnswer {
+  movies?: RawMdbItem[];
+  shows?: RawMdbItem[];
+  items?: RawMdbItem[];
+  pagination?: { next_cursor?: string | null; has_more?: boolean };
+  next_cursor?: string | null;
+}
+
+/**
+ * MDBList pages a list with a cursor it hands out with each page (skipping by count is the older
+ * way, still answered). The cursor for the page after `offset` titles is remembered here; a page
+ * asked for without one (the first, or after a restart) goes by count.
+ */
+const cursors = new Map<string, string>();
+
+/**
+ * One page of a list's movies and shows. `next` is the `offset` of the page after this one, or
+ * null when this was the last: by what MDBList said (a cursor, its `X-Has-More` header), else by
+ * whether this page came back full. Titles with neither an IMDb nor a TMDB id are left out; they
+ * still count towards `next`.
+ */
+export async function mdblistListItems(apiKey: string, ref: MdbListRef, q: MdbItemsQuery): Promise<{ items: MdbListTitle[]; next: number | null }> {
+  const base = ref.watchlist ? '/watchlist' : refPath(ref);
+  if (!base) return { items: [], next: null };
+  const sortBy = q.sortBy?.toLowerCase();
+  const params = new URLSearchParams({ limit: String(q.limit), unified: 'true', append_to_response: 'poster' });
+  if (q.media) params.set('mediatype', q.media);
+  if (sortBy && MDB_SORTS.has(sortBy)) {
+    params.set('sort', sortBy);
+    params.set('order', q.sortHow?.toLowerCase() === 'desc' ? 'desc' : 'asc');
+  }
+  const pageKey = `${apiKey.length}:${base}?${params}`;
+  const cursor = q.offset ? cursors.get(`${pageKey}@${q.offset}`) : undefined;
+  if (cursor) params.set('cursor', cursor);
+  else if (q.offset) params.set('offset', String(q.offset));
+
+  const res = await call<RawMdbItem[] | MdbItemsAnswer>({ provider: 'mdblist', apiKey }, 'GET', `${base}/items?${params}`);
+  const data = res.data;
+  if (!data || typeof data !== 'object') throw new TrackerError('retry', 'MDBList sent an answer that could not be read.');
+  let raw: RawMdbItem[];
+  if (Array.isArray(data)) raw = data;
+  else if (Array.isArray(data.items)) raw = data.items;
+  else {
+    raw = [...(data.movies ?? []), ...(data.shows ?? [])];
+    // Movies and shows come apart; their rank on the list puts them back in its order.
+    if (raw.every((r) => typeof r.rank === 'number')) raw.sort((a, b) => a.rank! - b.rank!);
+  }
+
+  const items: MdbListTitle[] = [];
+  for (const r of raw) {
+    const ids = r.ids ?? { imdb: r.imdb_id, tmdb: r.tmdb_id ?? r.id };
+    const metaId = metaIdFromIds(ids);
+    const kind = (r.mediatype ?? q.media ?? '').toLowerCase();
+    if (!metaId || !r.title || (kind !== 'movie' && kind !== 'show')) continue;
+    items.push({ metaId, type: kind === 'movie' ? 'movie' : 'series', name: r.title, year: r.release_year ?? undefined, tmdbId: tmdbFromIds(ids), poster: typeof r.poster === 'string' && r.poster ? r.poster : undefined });
+  }
+
+  const paging = Array.isArray(data) ? undefined : data;
+  const next = paging?.pagination?.next_cursor ?? paging?.next_cursor ?? undefined;
+  if (next) cursors.set(`${pageKey}@${q.offset + raw.length}`, next);
+  const header = Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === 'x-has-more')?.[1];
+  const said = header !== undefined ? /^(true|1)$/i.test(header.trim()) : paging?.pagination?.has_more;
+  const more = next ? true : said ?? raw.length >= q.limit;
+  return { items, next: more && raw.length ? q.offset + raw.length : null };
+}

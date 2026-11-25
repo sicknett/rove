@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { mpv, send, subscribe } from './bridge';
+import { inShell, mpv, send, subscribe } from './bridge';
 import { useAddons } from './addons/store';
 import { flushAll } from './state/flushAll';
 import { AppShell } from './components/AppShell';
@@ -29,6 +29,7 @@ import { ContextMenuHost } from './ui/contextmenu';
 import { ToastViewport, toast } from './ui/toast';
 import logoUrl from './assets/rove-logo.png';
 import { useServers } from './servers/store';
+import { useUpdate } from './lib/update';
 
 const queryClient = new QueryClient({
   // No retry here: requests already retry once below (lib/http), and two layers of retries kept a
@@ -154,6 +155,27 @@ export function App() {
     send({ t: 'video', visible: !!session });
     if (!session) setPip(false);
   }, [session]);
+
+  // A new version is looked for shortly after start and twice a day while the app stays open.
+  // Finding one only says so; installing is the user's choice (Settings → About).
+  useEffect(() => {
+    if (!inShell) return;
+    let told: string | null = null;
+    const look = async () => {
+      await useUpdate.getState().check(true);
+      const { status, release } = useUpdate.getState();
+      if (status === 'available' && release && told !== release.version) {
+        told = release.version;
+        toast.info(`ROVE ${release.version} is available`, { label: 'See update', run: () => useNav.getState().push({ name: 'settings', section: 'about' }) });
+      }
+    };
+    const first = window.setTimeout(() => void look(), 8000);
+    const again = window.setInterval(() => void look(), 12 * 60 * 60 * 1000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(again);
+    };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;

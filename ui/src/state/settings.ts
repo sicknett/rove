@@ -15,8 +15,18 @@ export interface Settings {
     showRatings: boolean;
     heroEnabled: boolean;
     heroTrailers: boolean;
+    /** Trailers start by themselves after a moment on a title, or only under the pointer. */
+    heroTrailerStart: 'auto' | 'hover';
+    /** What the banner features: the rows (starred ones first), or the user's own titles. */
+    heroSource: 'auto' | 'continue' | 'watchlist';
+    /** Home takes its colour from the banner's picture. */
+    ambientHome: boolean;
     reduceMotion: boolean;
+    /** Where the main navigation sits. */
+    navPosition: 'left' | 'top';
     landscapeContinueWatching: boolean;
+    /** Home rows made from what the profile watches (recs/): Top picks, Because you watched, Top 10s and the rest. One switch for all of them. */
+    smartRows: boolean;
   };
   playback: {
     autoPlayNext: boolean;
@@ -71,8 +81,13 @@ export const DEFAULT_SETTINGS: Settings = {
     showRatings: true,
     heroEnabled: true,
     heroTrailers: true,
+    heroTrailerStart: 'auto',
+    heroSource: 'auto',
+    ambientHome: true,
     reduceMotion: false,
+    navPosition: 'left',
     landscapeContinueWatching: true,
+    smartRows: true,
   },
   playback: {
     autoPlayNext: true,

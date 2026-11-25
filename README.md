@@ -1,8 +1,11 @@
 # ROVE
 
-A streaming app for Windows that plays from the Stremio addons you choose (for example
-AIOMetadata for catalogs and AIOStreams for sources) and keeps your history with PublicMetaDB.
-Built to feel like a native, polished media app: smooth, quiet, and fast to start.
+A streaming app for Windows that plays from the Stremio addons and media servers you choose (for
+example AIOMetadata for catalogs, AIOStreams for sources, or your own Jellyfin or Plex) and keeps
+your history with the tracker you pick: PublicMetaDB, Trakt, Simkl or MDBList. Built to feel like
+a native, polished media app: smooth, quiet, and fast to start.
+
+ROVE plays what your own addons and servers provide. It includes no content and no sources.
 
 ![Home](docs/screenshots/home.jpg)
 
@@ -23,6 +26,16 @@ missing.
 
 Uninstalling asks whether to also remove your profiles, history, addons and sign-ins; by default
 they are kept for a later install.
+
+### Updates
+
+ROVE looks for a new release when it starts, and Settings → About has **Check for updates**.
+Updating downloads the new Setup from this repository's releases, checks it, closes ROVE,
+installs, and opens it again with everything you set up in place.
+
+Each release is signed with a key that only the publisher holds, and the app refuses a download
+that key did not sign (`shell/src/update.rs`), so a tampered file cannot be installed even if the
+download location were compromised.
 
 ## How it is put together
 
@@ -61,7 +74,17 @@ powershell -ExecutionPolicy Bypass -File tools\make-installer.ps1   # dist\ROVE-
 It builds everything, makes the wizard art from the brand assets, and compiles
 `installer\rove.iss`. The version comes from `shell\Cargo.toml`. Optional build-time settings go
 in `ui\.env.local` (never committed): `VITE_TMDB_API_KEY`, `VITE_TRAKT_CLIENT_ID`,
-`VITE_TRAKT_CLIENT_SECRET`, `VITE_SIMKL_CLIENT_ID`.
+`VITE_SIMKL_CLIENT_ID`.
+
+A release for the Update button: raise the version in `shell\Cargo.toml`, then
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\make-release.ps1 -Notes "What changed" -Publish
+```
+
+It builds the Setup, signs it with the release key (`%USERPROFILE%\.rove\update-signing-key.pem`,
+never in the repository) and publishes both files as a GitHub release. A fork that publishes its
+own releases needs its own key pair, with the public half in `shell/src/update.rs`.
 
 Checks: `npx vitest run` in `ui/`, `cargo test` in `shell/`, and
 `tools\smoke.ps1` (starts the debug build muted with a sample stream, then closes it).
@@ -72,3 +95,22 @@ Everything stays on your PC under `%LOCALAPPDATA%\ROVE`. Addon links and API key
 for your Windows account. Network requests go only to your addons, TMDB, the tracker you
 connect (PublicMetaDB, Trakt, Simkl or MDBList), the media servers you add, and the community
 skip-time services.
+
+Optional pieces send only what they need, and only when you switch them on: an AI assistant
+(your request text, and titles from your history for the "For you" row, to the provider whose key
+you entered) and list imports (requests to Trakt, MDBList or your server). Details:
+[PRIVACY.md](PRIVACY.md).
+
+## Credits and notices
+
+- The built-in Home is [Kaptain's Collection](https://kaptain.stream/), a community-made set of
+  rows. All credit for its curation goes to Kaptain.
+- Playback is [mpv](https://mpv.io/) (libmpv). The window and page run on tao, wry and Microsoft
+  Edge WebView2.
+- This product uses the TMDB API but is not endorsed or certified by TMDB.
+- This product uses the Trakt API but is not endorsed or certified by Trakt.
+- Skip times come from TheIntroDB, IntroDB, PublicMetaDB and AniSkip community data.
+
+## Licence
+
+ROVE is free software under the [GNU General Public License v3.0](LICENSE) or later.

@@ -190,17 +190,19 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .dialog__stack { display: grid; gap: 10px; }
 .dialog__stack .btn { width: 100%; }
 
-.overlay--sheet { place-items: stretch end; background: rgba(4, 5, 6, 0.45); backdrop-filter: none; }
+/* One row exactly as tall as the window: without the explicit track a long list makes the row (and
+   the sheet) grow past the window, and then nothing inside can scroll. */
+.overlay--sheet { place-items: stretch end; grid-template-rows: minmax(0, 1fr); background: rgba(4, 5, 6, 0.45); backdrop-filter: none; }
 /* An overlay covers the title bar, so it draws the window buttons again on top of itself. */
 .overlay > .titlebar__buttons { position: fixed; top: 0; right: 0; height: var(--titlebar-h); }
 .overlay > .titlebar__buttons .winbtn { app-region: no-drag; }
-.sheet { height: 100%; display: flex; flex-direction: column; background: var(--glass-strong); backdrop-filter: blur(30px) saturate(1.2); box-shadow: -24px 0 80px rgba(0, 0, 0, 0.5), inset 1px 0 0 var(--line); animation: slide-in 300ms var(--ease-out) both; outline: none; }
+.sheet { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--glass-strong); backdrop-filter: blur(30px) saturate(1.2); box-shadow: -24px 0 80px rgba(0, 0, 0, 0.5), inset 1px 0 0 var(--line); animation: slide-in 300ms var(--ease-out) both; outline: none; }
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
 .sheet__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: calc(var(--titlebar-h) + 8px) 20px 14px 28px; }
 .sheet__titles { min-width: 0; }
 .sheet__title { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -0.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sheet__subtitle { margin-top: 4px; font-size: 13.5px; color: var(--ink-2); }
-.sheet__body { flex: 1; overflow-y: auto; padding: 4px 28px 28px; }
+.sheet__body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 28px 28px; }
 
 .empty { display: grid; justify-items: center; text-align: center; gap: 10px; padding: 72px 24px; color: var(--ink-2); animation: rise 400ms var(--ease-out) both; }
 .empty__icon { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-strong); margin-bottom: 6px; }
@@ -261,7 +263,10 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 
 /* ============ App shell ============ */
 .shell { position: relative; height: 100%; }
-.sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; align-items: center; padding: 14px 0 18px; background: linear-gradient(to right, rgba(11, 12, 13, 0.92), rgba(11, 12, 13, 0.55) 70%, rgba(11, 12, 13, 0)); }
+/* The bar's shading is the page's colour: the usual dark, or Home's colour while Home takes one
+   from its banner (set on the bar itself, and registered so it fades with the page). */
+@property --ambient-page { syntax: '<color>'; inherits: true; initial-value: #0b0c0d; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; align-items: center; padding: 14px 0 18px; background: linear-gradient(to right, color-mix(in srgb, var(--ambient-page) 92%, transparent), color-mix(in srgb, var(--ambient-page) 55%, transparent) 70%, transparent); transition: --ambient-page 1400ms linear; }
 .sidebar__mark { width: 26px; margin: 2px 0 26px; opacity: 0.95; }
 .sidebar__items { display: grid; gap: 6px; }
 .sidebar__item { width: 64px; display: grid; justify-items: center; gap: 4px; padding: 9px 0 8px; border-radius: 14px; color: var(--ink-3); transition: color 150ms, background-color 150ms; }
@@ -270,11 +275,30 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .sidebar__item.is-on { color: var(--ink); }
 .sidebar__item.is-on svg { color: var(--accent-strong); }
 .sidebar__label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em; }
+.sidebar__item { position: relative; }
+.sidebar__dot { position: absolute; top: 7px; right: 16px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 2px rgba(11, 12, 13, 0.9); }
+.shell--nav-top .sidebar__dot { top: 5px; right: 5px; }
 .sidebar__bottom { margin-top: auto; display: grid; justify-items: center; gap: 12px; }
 .sidebar__profile { position: relative; border-radius: 30%; transition: transform 160ms var(--ease-out); }
 .sidebar__profile:hover { transform: scale(1.06); }
 .sidebar__alert { position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg); }
 .shell__main { position: absolute; inset: 0; }
+/* Navigation across the top instead of down the side (Settings → Appearance). The same bar, laid
+   out in a row inside the title bar's strip; the page gets its full width back. */
+.shell--nav-top { --sidebar-w: 0px; --titlebar-h: 58px; }
+.shell--nav-top .sidebar { inset: 0 0 auto 0; width: auto; height: var(--titlebar-h); z-index: 61; flex-direction: row; align-items: center; padding: 0 152px 0 20px; background: linear-gradient(to bottom, color-mix(in srgb, var(--ambient-page) 90%, transparent), color-mix(in srgb, var(--ambient-page) 50%, transparent) 70%, transparent); pointer-events: none; }
+.shell--nav-top .sidebar > * { pointer-events: auto; }
+.shell--nav-top .sidebar__mark { width: 24px; margin: 0; }
+/* Room after the mark for the title bar's back and forward arrows, which sit beneath this bar. */
+.shell--nav-top .sidebar__items { display: flex; gap: 2px; margin-left: 96px; }
+.shell--nav-top .sidebar__item { width: auto; display: flex; align-items: center; gap: 8px; padding: 8px 13px; border-radius: 10px; app-region: no-drag; }
+.shell--nav-top .sidebar__item.is-on { background: rgba(255, 255, 255, 0.07); }
+.shell--nav-top .sidebar__item svg { width: 18px; height: 18px; }
+.shell--nav-top .sidebar__label { font-size: 13.5px; font-weight: 600; }
+.shell--nav-top .sidebar__bottom { margin: 0 0 0 auto; display: flex; align-items: center; gap: 10px; }
+.shell--nav-top .sidebar__profile { app-region: no-drag; display: grid; }
+.shell--nav-top .titlebar__nav { margin-left: 58px; }
+@media (max-width: 1080px) { .shell--nav-top .sidebar__label { display: none; } .shell--nav-top .sidebar__item { padding: 9px 11px; } }
 .screen { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; scroll-behavior: auto; }
 .screen.is-active { animation: fade 220ms var(--ease-out); }
 .screen-pad { padding: calc(var(--titlebar-h) + 22px) var(--gutter) 64px calc(var(--sidebar-w) + var(--gutter) - 12px); }
@@ -357,6 +381,41 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .source-list__text > span:first-child { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-list__kind { font-size: 12px; color: var(--ink-3); }
 .inline-form--wrap { flex-wrap: wrap; align-items: center; }
+.source-list__blocked { color: var(--warn); }
+/* Picking lists (Import lists, a folder's "add a source"): where they come from, a provider's
+   sections, and rows to tick. Flat: a tint on hover and space between things, nothing boxed. */
+.provider-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 3px; border-radius: var(--radius); background: rgba(255, 255, 255, 0.07); }
+.provider-tab { display: grid; gap: 1px; min-width: 0; padding: 8px 14px; border-radius: 9px; text-align: left; transition: background-color 150ms, color 150ms; }
+.provider-tab:hover { background: rgba(255, 255, 255, 0.06); }
+.provider-tab.is-on { background: var(--ink); color: #0b0c0d; }
+.provider-tab__name { font-size: 14px; font-weight: 650; }
+.provider-tab__state { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-tab.is-missing .provider-tab__state { color: var(--warn); }
+.provider-tab.is-on .provider-tab__state { color: rgba(11, 12, 13, 0.64); }
+.pick { display: flex; flex-direction: column; gap: 12px; height: min(320px, 38vh); }
+.pick > .field, .pick > .inline-form, .pick > .chips { flex: none; }
+.pick__body { flex: 1; min-height: 0; margin: 0 -8px; padding: 0 8px; overflow-y: auto; }
+.pick-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.pick-row { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px; border-radius: 10px; text-align: left; transition: background-color 110ms; }
+.pick-row:hover:not(:disabled), .pick-row:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
+.pick-row:disabled { opacity: 0.5; }
+.pick-row__tick { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 6px; box-shadow: inset 0 0 0 1.5px var(--line-2); color: var(--accent-ink); transition: background-color 120ms, box-shadow 120ms; }
+.pick-row.is-on .pick-row__tick { background: var(--accent); box-shadow: none; }
+.pick-row:disabled .pick-row__tick { color: var(--ink-2); }
+.pick-row__text { display: grid; gap: 1px; min-width: 0; }
+.pick-row__title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-row__detail { font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-row--loading { pointer-events: none; }
+.pick-row--loading .pick-row__tick { box-shadow: none; }
+.pick-row__bar { height: 14px; }
+.pick__note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.pick__body > .pick__note { padding: 14px 0; }
+.pick__note--foot { margin-top: 10px; }
+.pick__missing { display: grid; gap: 12px; align-content: start; min-height: min(320px, 38vh); padding-top: 4px; }
+.pick__missing-title { margin: 0; font-size: 15px; font-weight: 650; }
+.import-as { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+.import-as__row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.dialog__count { font-size: 13px; color: var(--ink-3); }
 .device-code { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .device-code__value { font-size: 26px; font-weight: 700; letter-spacing: 0.18em; font-variant-numeric: tabular-nums; padding: 6px 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.08); color: var(--ink); user-select: all; }
 .row__viewport { position: relative; }
@@ -372,6 +431,19 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .row__more-spinner { flex: none; width: 60px; display: grid; place-items: center; }
 /* In place of cards: a row, or its next page, that did not load. */
 .row__note { flex: none; align-self: center; display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
+/* In a row's header: what the row is doing right now (For you fetching new picks). */
+.row__status { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+/* Top 10 rows (screens/home/SmartRows): each poster stands beside its place in the chart, a tall
+   outlined numeral that the poster overlaps. The numeral is as tall as the poster and sized from
+   the card width, so it follows the card size setting. Outlined, not filled: Home's background
+   takes its colour from the banner, and an outline reads on any of them. */
+.rank { position: relative; flex: none; display: flex; align-items: flex-start; scroll-snap-align: start; }
+.rank__num { flex: none; display: flex; align-items: flex-end; height: calc(var(--card-w) * 1.5); margin-right: calc(var(--card-w) * -0.2); font-size: calc(var(--card-w) * 1.14); font-weight: 800; line-height: 0.76; letter-spacing: -0.05em; font-feature-settings: 'lnum', 'tnum' 0; color: transparent; -webkit-text-stroke: 2.5px var(--ink-3); user-select: none; pointer-events: none; transition: color 220ms var(--ease-out), -webkit-text-stroke-color 220ms var(--ease-out); }
+/* "10" is two digits in the room of one: drawn closer together and a little narrower. */
+.rank__num--wide { letter-spacing: -0.12em; transform: scaleX(0.84); transform-origin: right bottom; margin-left: calc(var(--card-w) * -0.16); }
+.rank > .card { z-index: 1; }
+.rank:hover .rank__num, .rank:focus-within .rank__num { color: var(--accent-soft); -webkit-text-stroke-color: var(--accent-strong); }
+.row--top10 .row__scroller { gap: 10px; }
 /* Under a grid or a list of results: the part that did not load. */
 .load-more { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 22px 0 0; font-size: 13px; color: var(--ink-3); }
 .screen-pad .row__head, .screen-pad .row__scroller { padding-left: 0; padding-right: 0; scroll-padding-left: 0; }
@@ -396,10 +468,14 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .hero__slide { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity 900ms var(--ease-out), visibility 0s 900ms; }
 .hero__slide.is-active { opacity: 1; visibility: visible; transition: opacity 900ms var(--ease-out); }
 .hero__backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
-.hero__trailer { position: absolute; top: 50%; left: 50%; width: 140%; height: 140%; transform: translate(-50%, -50%); border: 0; pointer-events: none; animation: fade 1.2s var(--ease-out) both; }
+.hero__trailer { position: absolute; top: 50%; left: 50%; width: 140%; height: 140%; transform: translate(-50%, -50%); border: 0; pointer-events: none; opacity: 0; transition: opacity 900ms var(--ease-out); }
+.hero__trailer.is-visible { opacity: 1; }
+.hero__sound { position: absolute; right: var(--gutter); bottom: calc(clamp(70px, 14vh, 130px) + 26px); z-index: 3; animation: fade 400ms var(--ease-out) both; }
 .hero__shade { position: absolute; inset: 0; background: linear-gradient(to right, rgba(11, 12, 13, 0.92) 0%, rgba(11, 12, 13, 0.55) 38%, rgba(11, 12, 13, 0) 70%), linear-gradient(to top, var(--bg) 0%, rgba(11, 12, 13, 0.6) 22%, rgba(11, 12, 13, 0) 50%), linear-gradient(to bottom, rgba(11, 12, 13, 0.55), rgba(11, 12, 13, 0) 18%); }
 .hero__content { position: absolute; left: calc(var(--sidebar-w) + var(--gutter) - 12px); bottom: clamp(70px, 14vh, 130px); width: min(620px, 52vw); }
-.hero__slide.is-active .hero__content > * { animation: rise 700ms var(--ease-out) both; }
+/* `backwards`, not `both`: once the entrance is over the text's own styles apply again, so it can
+   step aside for a trailer. */
+.hero__slide.is-active .hero__content > * { animation: rise 700ms var(--ease-out) backwards; }
 .hero__slide.is-active .hero__content > :nth-child(2) { animation-delay: 80ms; }
 .hero__slide.is-active .hero__content > :nth-child(3) { animation-delay: 140ms; }
 .hero__slide.is-active .hero__content > :nth-child(4) { animation-delay: 200ms; }
@@ -409,12 +485,33 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .hero__rating, .title__rating { display: inline-flex; align-items: center; gap: 5px; color: #ffd772; font-weight: 650; }
 .hero__overview { margin: 14px 0 0; font-size: 15px; line-height: 1.6; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; max-width: 58ch; }
 .hero__actions { display: flex; gap: 12px; margin-top: 26px; align-items: center; }
+/* While a trailer plays the picture has the stage: the description steps aside and the logo
+   shrinks toward its corner, the way streaming services' billboards do. */
+.hero__logo, .hero__title { transform-origin: left bottom; transition: transform 900ms var(--ease-out); }
+.hero__overview { max-height: 6em; transition: opacity 600ms var(--ease-out), max-height 900ms var(--ease-out), margin 900ms var(--ease-out); }
+.hero__slide.is-playing .hero__logo, .hero__slide.is-playing .hero__title { transform: scale(0.7); }
+.hero__slide.is-playing .hero__overview { opacity: 0; max-height: 0; margin-top: 0; }
+
 .hero__dots { position: absolute; right: var(--gutter); bottom: clamp(70px, 14vh, 130px); display: flex; gap: 8px; z-index: 2; }
 .hero__dot { position: relative; width: 8px; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.3); overflow: hidden; transition: width 300ms var(--ease-out), background-color 200ms; }
 .hero__dot.is-on { width: 34px; background: rgba(255, 255, 255, 0.25); }
 .hero__dot-fill { position: absolute; inset: 0; background: var(--ink); transform-origin: left; animation: dot-fill linear both; }
 @keyframes dot-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-.home { padding-bottom: 64px; }
+.home { padding-bottom: 64px; min-height: 100%; }
+/* Home takes its colour from the banner's picture: two flat sheets pinned to the window that
+   cross-fade (see AmbientLayer). Nothing is painted into the scrolling page and only opacity
+   changes, so there is no gradient to band and no redraw to tear. The banner's picture always
+   fades out at its bottom through a mask, into whatever is behind it (the colour, or the page). */
+.home { position: relative; }
+.home__ambient { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.home__tint { position: absolute; inset: 0; opacity: 0; will-change: opacity; transition: opacity 1400ms linear; }
+.home__tint.is-on { opacity: 0.5; }
+.home > .hero, .home > .home__rows { z-index: 1; }
+.hero__backdrop, .hero__trailer, .hero__shade { -webkit-mask-image: linear-gradient(to bottom, #000 56%, transparent 97%); mask-image: linear-gradient(to bottom, #000 56%, transparent 97%); }
+/* The trailer's frame is taller than the banner (140 %, to crop the player's edges): its mask is
+   sized to the banner itself, or the fade would end below the banner and leave a hard edge. */
+.hero__trailer { -webkit-mask-size: 100% 71.43%; mask-size: 100% 71.43%; -webkit-mask-position: center; mask-position: center; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+.reduce-motion .home__tint { transition: none; }
 .home__rows { position: relative; padding-top: calc(var(--titlebar-h) + 12px); }
 .home__rows--under-hero { margin-top: -96px; padding-top: 0; }
 .home-empty { display: flex; align-items: center; justify-content: space-between; gap: 32px; flex-wrap: wrap; margin: 18px var(--gutter) 8px calc(var(--sidebar-w) + var(--gutter) - 12px); padding: 26px 28px; border-radius: var(--radius-lg); background: linear-gradient(120deg, var(--accent-soft), rgba(255, 255, 255, 0.03)); animation: rise 400ms var(--ease-out) both; }
@@ -489,6 +586,18 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .id-jump { margin-bottom: 24px; padding: 12px 16px; border-radius: var(--radius); background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
 .search-section { margin-bottom: 40px; }
 .search-section > .row__title { margin-bottom: 16px; }
+/* Ask (the AI assistant, in the search box): the Search/Ask switch and the Ask button sit at the
+   end of the box; the picks are a plain grid of poster cards, each with the reason it was picked. */
+.search-field .segmented, .search-field .btn { flex: none; }
+.ask-status { display: flex; align-items: center; gap: 10px; margin: 0 0 22px; font-size: 14px; color: var(--ink-2); }
+.ask-for { margin: -8px 0 20px; font-size: 14px; color: var(--ink-3); }
+.ask-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr)); gap: 30px 22px; }
+.ask-grid .card { width: auto; }
+.ask-card { min-width: 0; }
+.ask-card__reason { margin: 6px 2px 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ask-note { margin: 24px 0 0; font-size: 13px; color: var(--ink-3); }
+/* A recent ask is a sentence: the chip shows its start, the tooltip all of it. */
+.chip__text { overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
 
 .person-head { display: flex; gap: 32px; align-items: flex-start; margin-bottom: 36px; }
 .person-head__img, .person-head__mono { width: 180px; aspect-ratio: 2 / 3; border-radius: var(--radius-lg); object-fit: cover; background: var(--surface); flex: none; }
@@ -535,7 +644,7 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .s-group__note { margin: 10px 0 0; font-size: 13px; line-height: 1.55; color: var(--ink-3); max-width: 80ch; }
 .s-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 64px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .s-row--stacked { flex-direction: column; align-items: stretch; gap: 12px; }
-.s-row--actions { justify-content: flex-end; min-height: 52px; }
+.s-row--actions { justify-content: flex-end; min-height: 52px; gap: 8px; }
 .s-row__text { display: grid; gap: 2px; min-width: 0; }
 .s-row__label { font-size: 14.5px; font-weight: 600; }
 .s-row__hint { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
@@ -581,6 +690,7 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .about__mark { width: 56px; }
 .about__name { margin: 0; font-size: 22px; font-weight: 750; letter-spacing: 0.18em; }
 .about__version { margin: 2px 0 0; color: var(--ink-3); }
+.about__notes { margin: 0 0 14px; padding: 0 2px; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); white-space: pre-line; }
 
 /* ============ Profiles and first run ============ */
 .picker, .onboarding { position: relative; height: 100%; display: grid; place-items: center; overflow: hidden; }
@@ -681,6 +791,18 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .icon-btn:active { transform: scale(0.92); }
 .icon-btn.is-active { background: rgba(255, 255, 255, 0.16); opacity: 1; }
 .icon-btn--lg { width: 46px; height: 46px; }
+/* Names for the player's buttons, shown at once on hover (the built-in tooltip waits about a second). */
+.icon-btn[data-tip]::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translate(-50%, 4px); padding: 6px 10px; border-radius: 8px; background: rgba(18, 20, 22, 0.94); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.07); color: var(--ink); font-size: 12.5px; font-weight: 550; letter-spacing: 0; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 90ms 60ms, transform 90ms 60ms; z-index: 12; }
+.icon-btn[data-tip]:hover::after, .icon-btn[data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.icon-btn[data-tip].is-active::after, .icon-btn[data-tip]:active::after { opacity: 0; }
+.icon-btn[data-tip-below]::after { bottom: auto; top: calc(100% + 8px); left: 0; transform: translate(0, -4px); }
+.icon-btn[data-tip-below]:hover::after { transform: none; }
+/* At the ends of the bar the label lines up with the button's edge, so it never leaves the window. */
+.controls-row__group:first-child > .icon-btn:first-child[data-tip]::after { left: 0; transform: translate(0, 4px); }
+.controls-row__group:first-child > .icon-btn:first-child[data-tip]:hover::after { transform: none; }
+.controls-row__group:last-child > .icon-btn:last-child[data-tip]::after, .controls-row__group:last-child > .menu-anchor:nth-last-child(-n+2) > .icon-btn[data-tip]::after { left: auto; right: 0; transform: translate(0, 4px); }
+.controls-row__group:last-child > .icon-btn:last-child[data-tip]:hover::after, .controls-row__group:last-child > .menu-anchor:nth-last-child(-n+2) > .icon-btn[data-tip]:hover::after { transform: none; }
+.player--pip .icon-btn[data-tip]::after { display: none; }
 .icon-btn--play { width: 52px; height: 52px; }
 .icon-btn__badge { position: absolute; font-size: 8.5px; font-weight: 750; top: 50%; left: 50%; transform: translate(-50%, -38%); letter-spacing: -0.02em; }
 .player__center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
@@ -748,6 +870,11 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .menu__check { color: var(--accent-strong); display: grid; place-items: center; grid-row: span 2; }
 .menu__label { font-size: 14px; }
 .menu__detail { grid-column: 2; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.menu--more { width: 280px; }
+.menu__item--nav { grid-template-columns: 26px 1fr auto; }
+.menu__item--nav .menu__label { white-space: nowrap; }
+.menu__check--icon { color: var(--ink-2); grid-row: auto; }
+.menu__value { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--ink-3); }
 .menu__empty { margin: 4px 10px 10px; font-size: 13.5px; color: var(--ink-3); }
 .menu__divider { height: 1px; margin: 8px 6px; background: var(--line); }
 .menu__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px 10px; }
@@ -765,6 +892,10 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .ep-item__text { display: grid; gap: 3px; min-width: 0; }
 .ep-item__title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep-item__sub { font-size: 12.5px; color: var(--ink-3); }
+.ep-item__overview { margin-top: 3px; font-size: 12.5px; line-height: 1.4; color: var(--ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: left; }
+.ep-item { text-align: left; }
+.ep-seasons { display: inline-flex; align-items: center; gap: 12px; margin-top: 6px; }
+.ep-seasons__count { font-size: 13px; color: var(--ink-3); }
 .ep-item.is-current .ep-item__sub { color: var(--accent-strong); }
 .shortcuts { margin: 0; display: grid; gap: 10px; }
 .shortcuts__row { display: flex; justify-content: space-between; align-items: center; gap: 16px; }

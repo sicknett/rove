@@ -4,7 +4,7 @@
 
 import type { Meta, Stream, Video } from '../addons/types';
 import { cached, resolutionLabel, roveDeviceId, ServerError, serverFetch, sizeLabel } from './http';
-import { serverItemId, type MediaServer, type PlaybackReport, type ServerAdapter, type ServerItemPreview, type ServerLibrary } from './types';
+import { serverItemId, type MediaServer, type PlaybackReport, type ServerAdapter, type ServerItemPreview, type ServerLibrary, type ServerList } from './types';
 
 const PLEX_TV = 'https://plex.tv/api/v2';
 
@@ -151,6 +151,14 @@ interface PlexItem {
   Director?: { tag: string }[];
   Image?: { type: string; url: string }[];
   Media?: PlexMedia[];
+  /** On a collection: what it holds (`movie`, `show`, …). */
+  subtype?: string;
+  /** On a playlist: `video`, `audio` or `photo`. */
+  playlistType?: string;
+  childCount?: number | string;
+  leafCount?: number | string;
+  /** A playlist's picture, made from its items. */
+  composite?: string;
 }
 
 interface PlexMedia {
@@ -167,7 +175,7 @@ interface PlexMedia {
   Part?: { key: string; file?: string; size?: number }[];
 }
 
-type Container<T = PlexItem> = { MediaContainer?: { Metadata?: T[]; Directory?: { key: string; title: string; type: string }[]; Hub?: { type: string; Metadata?: PlexItem[] }[]; size?: number } };
+type Container<T = PlexItem> = { MediaContainer?: { Metadata?: T[]; Directory?: { key: string; title: string; type: string }[]; Hub?: { type: string; Metadata?: PlexItem[] }[]; size?: number; totalSize?: number } };
 
 function photo(s: MediaServer, path: string | undefined, w: number, h: number) {
   if (!path) return undefined;
@@ -315,6 +323,45 @@ export const plexAdapter: ServerAdapter = {
     const r = await pms<Container>(s, `/hubs/search?${q({ query, limit, includeGuids: 1 })}`);
     const items = (r?.MediaContainer?.Hub ?? []).filter((h) => h.type === 'movie' || h.type === 'show').flatMap((h) => h.Metadata ?? []);
     return previews(s, items);
+  },
+
+  async lists(s) {
+    const count = (n: number | string | undefined) => (Number(n) > 0 ? Number(n) : undefined);
+    const libs = s.libraries?.length ? s.libraries : await plexAdapter.libraries(s);
+    // A library whose collections cannot be read does not hide the others, or the playlists.
+    const [playlists, ...perLibrary] = await Promise.all([
+      pms<Container>(s, `/playlists?${q({ playlistType: 'video' })}`).catch(() => null),
+      ...libs.map((l) => pms<Container>(s, `/library/sections/${l.id}/collections`).catch(() => null)),
+    ]);
+    if (!playlists && perLibrary.every((r) => !r)) throw new ServerError(`${s.name || 'Plex'} could not be reached.`);
+    const byName = (a: ServerList, b: ServerList) => a.name.localeCompare(b.name);
+    const collections = perLibrary
+      .flatMap((r) => r?.MediaContainer?.Metadata ?? [])
+      .filter((c) => !c.subtype || c.subtype === 'movie' || c.subtype === 'show')
+      .map<ServerList>((c) => ({ id: c.ratingKey, kind: 'collection', name: c.title, itemCount: count(c.childCount), poster: photo(s, c.thumb, 342, 513) }));
+    const lists = (playlists?.MediaContainer?.Metadata ?? [])
+      .filter((p) => !p.playlistType || p.playlistType === 'video')
+      .map<ServerList>((p) => ({ id: p.ratingKey, kind: 'playlist', name: p.title, itemCount: count(p.leafCount), poster: photo(s, p.composite ?? p.thumb, 342, 513) }));
+    return [...collections.sort(byName), ...lists.sort(byName)];
+  },
+
+  async listItems(s, list, offset, limit) {
+    const page = { page: { start: offset, size: limit } };
+    const query = q({ includeGuids: 1 });
+    let r: Container | null;
+    if (list.kind === 'playlist') r = await pms<Container>(s, `/playlists/${list.id}/items?${query}`, page);
+    else {
+      // Plex documents `/items`; servers from before that path answer `/children`.
+      r = await pms<Container>(s, `/library/collections/${list.id}/items?${query}`, page).catch((e) => {
+        if (e instanceof ServerError && e.status === 404) return pms<Container>(s, `/library/collections/${list.id}/children?${query}`, page);
+        throw e;
+      });
+    }
+    const raw = r?.MediaContainer?.Metadata ?? [];
+    const end = offset + raw.length;
+    const total = r?.MediaContainer?.totalSize;
+    const more = typeof total === 'number' ? end < total : raw.length >= limit;
+    return { items: await unify(s, previews(s, raw)), next: more && raw.length ? end : null };
   },
 
   async meta(s, itemId) {

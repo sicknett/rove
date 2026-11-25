@@ -12,6 +12,7 @@ import { navigate, useNav } from '../nav/router';
 import { playContinue, playEpisode } from '../player/launch';
 import { useHistory } from '../state/history';
 import { parseCollections, useCollections } from '../state/collections';
+import { ImportListsButton } from '../lists/ImportLists';
 import { Button, Empty, IconButton, Segmented } from '../ui/controls';
 import { Img } from '../ui/Img';
 import { toast } from '../ui/toast';
@@ -195,13 +196,14 @@ function CollectionsManager() {
         >
           New collection
         </Button>
+        <ImportListsButton variant="secondary" />
         <Button variant="ghost" icon={<Upload size={16} />} onClick={() => file.current?.click()}>
           Import collection JSON
         </Button>
         <input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0])} />
       </div>
       {!collections.length ? (
-        <Empty icon={<FolderPlus size={40} />} title="No collections">Import a collection file, such as one shared by the community.</Empty>
+        <Empty icon={<FolderPlus size={40} />} title="No collections">Import a collection file, such as one shared by the community, or import lists from Trakt, MDBList or a media server.</Empty>
       ) : (
         <ul className="manage-list">
           {collections.map((c, i) => (

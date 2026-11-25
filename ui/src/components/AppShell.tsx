@@ -1,3 +1,6 @@
+import { useAmbientPage } from '../screens/home/ambient';
+import { useUpdate } from '../lib/update';
+import { useSettings } from '../state/settings';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { CalendarDays, Compass, House, Library, Search, Settings as SettingsIcon } from 'lucide-react';
 import { mountedEntries, ScreenContext, useNav, type Entry, type Route } from '../nav/router';
@@ -11,6 +14,7 @@ import { Discover, CatalogPage, Search as SearchScreen, Person, CollectionPage }
 import { Library as LibraryScreen, Calendar } from '../screens/library';
 import { Settings } from '../screens/settings/Settings';
 import { CollectionEdit } from '../screens/collectionEdit';
+import { ListPage } from '../lists/ListPage';
 import markUrl from '../assets/rove-mark.png';
 
 const NAV: { route: Route; label: string; icon: typeof House; key: string }[] = [
@@ -22,13 +26,15 @@ const NAV: { route: Route; label: string; icon: typeof House; key: string }[] = 
 ];
 
 function Sidebar() {
+  const ambient = useAmbientPage((s) => s.color);
+  const updateReady = useUpdate((s) => s.status === 'available');
   const current = useNav((s) => s.stack[s.index].route.name);
   const goTab = useNav((s) => s.goTab);
   const profile = useProfiles((s) => s.profiles.find((p) => p.id === s.activeId));
   const signOut = useProfiles((s) => s.signOut);
   const syncState = useTracker((s) => s.state);
   return (
-    <nav className="sidebar" aria-label="Main">
+    <nav className="sidebar" aria-label="Main" style={ambient ? ({ '--ambient-page': `color-mix(in srgb, ${ambient} 50%, #0b0c0d)` } as React.CSSProperties) : undefined}>
       <img src={markUrl} alt="ROVE" className="sidebar__mark" draggable={false} />
       <div className="sidebar__items">
         {NAV.map((n) => (
@@ -42,6 +48,7 @@ function Sidebar() {
         <button className={`sidebar__item ${current === 'settings' ? 'is-on' : ''}`} onClick={() => goTab({ name: 'settings' })}>
           <SettingsIcon size={21} strokeWidth={current === 'settings' ? 2.2 : 1.8} />
           <span className="sidebar__label">Settings</span>
+          {updateReady && <span className="sidebar__dot" title="An update is available" />}
         </button>
         {profile && (
           <button className="sidebar__profile" title={`${profile.name} · switch profile`} onClick={signOut}>
@@ -74,6 +81,8 @@ function renderRoute(route: Route) {
       return <CollectionPage id={route.id} folder={route.folder} />;
     case 'collection-edit':
       return <CollectionEdit id={route.id} folder={route.folder} />;
+    case 'list':
+      return <ListPage id={route.id} />;
     case 'person':
       return <Person id={route.id} name={route.label} />;
     case 'settings':
@@ -110,6 +119,7 @@ const Screen = memo(function Screen({ entry, active, shown }: { entry: Entry; ac
 });
 
 export function AppShell({ hidden }: { hidden: boolean }) {
+  const navTop = useSettings((s) => s.settings.appearance.navPosition === 'top');
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
   const stack = useNav((s) => s.stack);
@@ -148,7 +158,7 @@ export function AppShell({ hidden }: { hidden: boolean }) {
   }, []);
 
   return (
-    <div className="shell" hidden={hidden} aria-hidden={hidden}>
+    <div className={`shell${navTop ? ' shell--nav-top' : ''}`} hidden={hidden} aria-hidden={hidden}>
       <TitleBar nav />
       <Sidebar />
       <main className="shell__main">

@@ -1,7 +1,7 @@
 {
   "name": "rove-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.14.0",
     "@fontsource-variable/inter": "5.2.5",
     "@tanstack/react-query": "5.62.0",
     "@tanstack/react-virtual": "3.13.0",

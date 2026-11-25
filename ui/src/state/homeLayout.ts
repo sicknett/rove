@@ -1,11 +1,18 @@
 // Which rows Home shows, in what order, under what names. Keys: `<addonId>:<type>:<catalogId>`
-// for catalogs, `collection_<id>` for collections, and `continue_watching`.
+// for catalogs, `collection_<id>` for collections, `list_<id>` for lists imported as rows,
+// `continue_watching`, `for_you` (the AI assistant's recommendations, a row only while an
+// assistant is connected), and `smart_<recipe>` for the rows made from the profile's own history
+// (recs/recipes.ts).
 
 import { create } from 'zustand';
 import { debouncedWriter, docs } from '../lib/native';
 import { profileDoc } from './profiles';
 
 export const CONTINUE_KEY = 'continue_watching';
+export const FOR_YOU_KEY = 'for_you';
+/** Rows made from the profile's history (Top picks, Because you watched, Top 10s, …). */
+export const SMART_PREFIX = 'smart_';
+export const isSmartKey = (key: string) => key.startsWith(SMART_PREFIX);
 
 export interface RowPref {
   key: string;
@@ -59,12 +66,21 @@ export const useHomeLayout = create<LayoutState>((set, get) => {
       const missing = keys.filter((k) => !known.has(k));
       if (!missing.length) return;
       const heroCount = get().items.filter((i) => i.hero).length;
-      const make = (key: string, i: number): RowPref => ({
-        key,
-        enabled: true,
-        order: 0,
-        hero: key !== CONTINUE_KEY && !key.startsWith('collection_') && !key.startsWith('server:') && heroCount + i < 2,
-      });
+      // The rows made from history (`smart_`) arrive a dozen at a time, ahead of the catalogs. They
+      // are left out of the count below, so the same catalog rows feed the banner with them as without.
+      let smartSoFar = 0;
+      const make = (key: string, at: number): RowPref => {
+        const i = at - smartSoFar;
+        if (isSmartKey(key)) smartSoFar++;
+        return {
+          key,
+          enabled: true,
+          order: 0,
+          // The banner takes titles from catalog rows only: not from collections, lists (`list_`) or
+          // the rows made from history.
+          hero: key !== CONTINUE_KEY && key !== FOR_YOU_KEY && !key.startsWith('collection_') && !key.startsWith('list_') && !isSmartKey(key) && !key.startsWith('server:') && heroCount + i < 2,
+        };
+      };
       const added = missing.map(make);
       const pin = new Set(pinned);
       // Continue Watching first, then pinned collections, then what was there, then the rest.
