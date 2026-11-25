@@ -5,6 +5,26 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+## 0.2.3 — 2026-11-25
+
+**Fixed**
+- Scrolling Home was laggy. Three things were drawn at a cost on every frame and are gone: a blur
+  that sat, hidden, behind the rating chip on every poster (191 of them on a full Home); the fade
+  masks on the banner, which are expensive over a playing video; and the trailer being torn down
+  and rebuilt as the banner scrolled out of and into view. The trailer now pauses and stops being
+  drawn while it is out of sight, and carries on when you come back.
+- The banner's trailer left dark bars with hard edges in wide or short windows. It now covers the
+  banner at any window shape.
+
+**Added**
+- A volume slider opens beside the banner's sound button; the level is remembered.
+
+**Checked**
+- Home at rest: 75 frames a second, no long tasks, nothing re-rendering (10 s, test copy on a
+  copy of a real history). Scrolling smoothness itself was not measured with a scripted scroll.
+- Browser build at a 2000×620 window: the trailer covers the banner, no masks are in use, the
+  slider is present.
+
 ## 0.2.2 — 2026-11-25
 
 **Fixed**

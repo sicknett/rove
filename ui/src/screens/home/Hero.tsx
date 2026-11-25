@@ -91,8 +91,18 @@ const SOUND_KEY = 'rove.trailerSound';
 /** YouTube draws its own buttons over the picture while a video starts; the trailer stays hidden until they are gone. */
 const REVEAL_AFTER_PLAYING_MS = 3200;
 
+const VOLUME_KEY = 'rove.trailerVolume';
 /** Out of 100. Trailers are mastered loud, and this is background sound on a menu. */
-const TRAILER_VOLUME = 12;
+const DEFAULT_VOLUME = 12;
+
+function trailerVolume(): number {
+  try {
+    const v = Number(localStorage.getItem(VOLUME_KEY));
+    return Number.isFinite(v) && v > 0 && v <= 100 ? v : DEFAULT_VOLUME;
+  } catch {
+    return DEFAULT_VOLUME;
+  }
+}
 
 function trailerSound(): boolean {
   try {
@@ -107,12 +117,15 @@ function trailerSound(): boolean {
  * previous/next), no controls, and the frame is only faded in once the video is really playing.
  * The page talks to the player through YouTube's frame messages (sound on and off, "it ended").
  */
-function HeroTrailer({ id, name, onShown, onEnded }: { id: string; name: string; onShown: () => void; onEnded: () => void }) {
+function HeroTrailer({ id, name, paused, onShown, onEnded }: { id: string; name: string; paused: boolean; onShown: () => void; onEnded: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [visible, setVisible] = useState(false);
   const [sound, setSound] = useState(trailerSound);
   const soundRef = useRef(sound);
   soundRef.current = sound;
+  const [volume, setVolume] = useState(trailerVolume);
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
   const shown = useRef(onShown);
   shown.current = onShown;
   const ended = useRef(onEnded);
@@ -135,7 +148,7 @@ function HeroTrailer({ id, name, onShown, onEnded }: { id: string; name: string;
       const state = data.event === 'onStateChange' ? data.info : data.event === 'infoDelivery' ? (data.info as { playerState?: number } | null)?.playerState : undefined;
       if (state === 1 && reveal === undefined) {
         if (soundRef.current) {
-          command('setVolume', [TRAILER_VOLUME]);
+          command('setVolume', [volumeRef.current]);
           command('unMute');
         }
         reveal = window.setTimeout(() => {
@@ -162,15 +175,46 @@ function HeroTrailer({ id, name, onShown, onEnded }: { id: string; name: string;
     } catch {
       /* remembered for this run only */
     }
-    if (next) command('setVolume', [TRAILER_VOLUME]);
+    if (next) command('setVolume', [volume]);
     command(next ? 'unMute' : 'mute');
   };
+
+  const changeVolume = (v: number) => {
+    setVolume(v);
+    try {
+      localStorage.setItem(VOLUME_KEY, String(v));
+    } catch {
+      /* remembered for this run only */
+    }
+    command('setVolume', [v]);
+    // Moving the slider is asking for sound.
+    if (!sound && v > 0) {
+      setSound(true);
+      try {
+        localStorage.setItem(SOUND_KEY, '1');
+      } catch {
+        /* as above */
+      }
+      command('unMute');
+    }
+  };
+
+  // Scrolled away or behind another screen: the video waits, and carries on when it is back.
+  const started = useRef(false);
+  useEffect(() => {
+    if (!started.current) {
+      started.current = true;
+      if (!paused) return;
+    }
+    command(paused ? 'pauseVideo' : 'playVideo');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused]);
 
   return (
     <>
       <iframe
         ref={frame}
-        className={`hero__trailer ${visible ? 'is-visible' : ''}`}
+        className={`hero__trailer ${visible ? 'is-visible' : ''} ${paused ? 'is-paused' : ''}`}
         title={`${name} trailer`}
         src={`${YT_ORIGIN}/embed/${id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&iv_load_policy=3&disablekb=1&fs=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
         allow="autoplay; encrypted-media"
@@ -178,10 +222,22 @@ function HeroTrailer({ id, name, onShown, onEnded }: { id: string; name: string;
         // The player only reports its state to a page that has said it is listening.
         onLoad={() => frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), YT_ORIGIN)}
       />
-      {visible && (
-        <IconButton label={sound ? 'Mute the trailer' : 'Turn the trailer sound on'} size="lg" className="ibtn--glass hero__sound" onClick={toggleSound}>
-          {sound ? <Volume2 size={20} /> : <VolumeX size={20} />}
-        </IconButton>
+      {visible && !paused && (
+        <div className="hero__sound">
+          <input
+            className="hero__volume"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={sound ? volume : 0}
+            aria-label="Trailer volume"
+            onChange={(e) => changeVolume(Number(e.target.value))}
+          />
+          <IconButton label={sound ? 'Mute the trailer' : 'Turn the trailer sound on'} size="lg" className="ibtn--glass" onClick={toggleSound}>
+            {sound ? <Volume2 size={20} /> : <VolumeX size={20} />}
+          </IconButton>
+        </div>
       )}
     </>
   );
@@ -220,15 +276,18 @@ function HeroSlide({ meta, active, near, live, hovered, onTrailer, onTrailerEnd 
   // the banner, as Settings says. It stops when the banner is left, scrolled away or covered.
   useEffect(() => {
     window.clearTimeout(timer.current);
-    const wanted = active && live && trailersOn && !!trailerId && (start === 'auto' ? !played : hovered);
-    if (!wanted) {
+    const allowed = active && trailersOn && !!trailerId && (start === 'auto' ? !played : hovered);
+    if (!allowed) {
       setShowTrailer(false);
       setPlaying(false);
       return;
     }
+    // One that is already there stays (paused while the banner is out of sight); building it up
+    // and tearing it down while the page scrolls is what makes scrolling stutter.
+    if (showTrailer || !live) return;
     timer.current = window.setTimeout(() => setShowTrailer(true), start === 'auto' ? TRAILER_AUTO_MS : TRAILER_HOVER_MS);
     return () => window.clearTimeout(timer.current);
-  }, [active, live, hovered, trailersOn, trailerId, start, played]);
+  }, [active, live, hovered, trailersOn, trailerId, start, played, showTrailer]);
 
   // The banner waits for a trailer that is loading or playing.
   useEffect(() => {
@@ -246,12 +305,13 @@ function HeroSlide({ meta, active, near, live, hovered, onTrailer, onTrailerEnd 
   const card = { metaId: meta.id, type, name: meta.name, poster: meta.poster, background: meta.background, logo, year };
 
   return (
-    <div className={`hero__slide ${active ? 'is-active' : ''} ${playing ? 'is-playing' : ''}`} aria-hidden={!active} inert={!active}>
+    <div className={`hero__slide ${active ? 'is-active' : ''} ${playing && live ? 'is-playing' : ''}`} aria-hidden={!active} inert={!active}>
       {near && <Img src={background} alt="" className="hero__backdrop" loading="eager" />}
       {active && showTrailer && trailerId && (
         <HeroTrailer
           id={trailerId}
           name={meta.name}
+          paused={!live}
           onShown={() => setPlaying(true)}
           onEnded={() => {
             setPlayed(true);

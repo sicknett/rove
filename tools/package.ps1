@@ -6,7 +6,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $out = Join-Path $root 'dist\ROVE'
 
-if (Get-Process rove -ErrorAction SilentlyContinue) { throw 'ROVE is running; close it first.' }
+# Only a copy running from this output folder blocks the build; an installed ROVE can stay open.
+if (Get-Process rove -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($out, [StringComparison]::OrdinalIgnoreCase) }) { throw 'The ROVE in dist\ROVE is running; close it first.' }
 
 Push-Location (Join-Path $root 'ui')
 try { npm run build | Out-Host; if ($LASTEXITCODE) { throw 'page build failed' } } finally { Pop-Location }
