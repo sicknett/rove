@@ -48,7 +48,7 @@ export const SECTION_GROUPS: { label: string; sections: SectionInfo[] }[] = [
     label: 'This PC',
     sections: [
       { id: 'profiles', label: 'Profiles', scope: 'shared', keywords: 'users who is watching' },
-      { id: 'data', label: 'Data', scope: 'shared', keywords: 'backup restore storage history' },
+      { id: 'data', label: 'Data', scope: 'shared', keywords: 'backup restore share code storage history' },
       { id: 'about', label: 'About', scope: 'shared', keywords: 'version update credits' },
     ],
   },
@@ -275,6 +275,9 @@ export const ENTRIES: SettingEntry[] = [
   entry('data', 'Back up and move')('data.backupKeys', 'Put sign-ins and keys in the backup', 'Adds your tracker and media server sign-ins and your TMDB, MDBList and AI assistant keys. Keep that file like a password.', 'secrets passwords api keys'),
   entry('data', 'Back up and move')('data.backup', 'Back up', 'Saves one .json file you can copy to another PC.', 'export save move transfer another pc'),
   entry('data', 'Back up and move')('data.restore', 'Restore a backup', 'Replaces the addons, profiles and settings on this PC with the backup’s.', 'import load move transfer'),
+  entry('data', 'Share your setup')('data.shareKeys', 'Include API keys and sign-ins', 'Anyone who has the code gets working keys and sign-ins until it runs out, so such a code lasts one day.', 'secrets passwords api keys tracker'),
+  entry('data', 'Share your setup')('data.shareCreate', 'Create a code', 'Makes a code a friend types into their ROVE to get your addons, profiles, settings, Home layout and collections.', 'share code friend send give export setup invite'),
+  entry('data', 'Share your setup')('data.shareUse', 'Use a code', 'Gets the setup a friend shared. You see what is in it and confirm before anything on this PC changes.', 'share code friend enter redeem import receive setup'),
   entry('data', 'Storage')('data.cache', 'Cached catalogs and details', 'Clearing makes everything load again from your addons. History and settings stay.', 'cache clear refresh stale'),
   entry('data', 'Storage')('data.logs', 'Logs', 'For reporting a problem: playback events and errors, never addon links or keys.', 'log report problem bug troubleshooting folder'),
   entry('data', 'Storage')('data.screenshots', 'Screenshots', 'Pictures you saved from the player.', 'pictures capture folder'),

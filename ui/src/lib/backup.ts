@@ -12,7 +12,7 @@ const FORMAT = 'rove-backup';
 
 const PER_PROFILE = ['settings', 'home', 'collections', 'tracks', 'searches'] as const;
 
-interface Backup {
+export interface Backup {
   format: typeof FORMAT;
   version: 1;
   createdAt: string;
@@ -22,6 +22,8 @@ interface Backup {
   /** The whole keys document: TMDB key, MDBList key, the AI assistant's provider and key. */
   keys?: { tmdbApiKey?: string | null; mdblistApiKey?: string | null; ai?: unknown };
   servers?: unknown;
+  /** On a setup shared with a code (see share.ts): the name of the profile that shared it. */
+  sharedBy?: string;
 }
 
 export async function makeBackup(includeKeys: boolean): Promise<Backup> {

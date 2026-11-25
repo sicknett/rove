@@ -12,6 +12,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 ## 1. Setup and addons
 - [x] First-run setup: paste addon manifest links (each one is fetched and checked), or skip
 - [x] Back up and restore: addons, profiles, settings, Home layout, collections, track choices; API keys only when asked; restoring freezes saves until reload so nothing old lands on top
+- [~] Share your setup with a code: Settings → Data → Create a code makes a 45-character code; a friend enters it in Settings → Data → Use a code, or on first start, sees what it holds, and confirms. Encrypted on this PC (AES-256-GCM; the secret is only in the code), kept at a public PrivateBin service that cannot read it, gone after at most a week (a day with keys). Not shared: watch history, recent searches, profile PINs, per-show track choices, the external player. API keys and sign-ins only when switched on. Stop sharing deletes the copy at once. (Seen end to end in test copies with a default setup; not yet tried between two people's PCs)
 - [x] Addon manager: add, remove (with undo), reorder, enable or disable, per-resource switches (catalogs, metadata, streams, subtitles)
 - [~] Open an addon's configure page; refresh every manifest
 - [x] Addon links stored encrypted (Windows DPAPI), never logged

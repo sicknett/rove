@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Check, FileUp, Plus } from 'lucide-react';
+import { ArrowRight, Check, FileUp, KeyRound, Plus } from 'lucide-react';
 import { useAddons } from '../addons/store';
 import { ReplaceAddonDialog, useAddonInstall } from './settings/addons';
+import { UseCodeDialog } from './settings/share';
 import { readBackup, restoreBackup } from '../lib/backup';
 import { Button, TextField } from '../ui/controls';
 import { Img } from '../ui/Img';
@@ -9,12 +10,13 @@ import { toast } from '../ui/toast';
 import logoUrl from '../assets/rove-logo.png';
 import wallpaperUrl from '../assets/wallpaper.png';
 
-/** First start with no addons: add addon links, or restore a ROVE backup from another PC. */
+/** First start with no addons: add addon links, use a code a friend shared, or restore a ROVE backup from another PC. */
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [link, setLink] = useState('');
   const adding = useAddonInstall(() => setLink(''));
   const addons = useAddons((s) => s.addons);
   const file = useRef<HTMLInputElement>(null);
+  const [usingCode, setUsingCode] = useState(false);
 
   const restore = async (f: File) => {
     try {
@@ -59,6 +61,16 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         <div className="onboarding__option">
           <div>
+            <h2 className="onboarding__option-title">Have a code from a friend?</h2>
+            <p className="onboarding__option-text">A friend can share their setup from Settings → Data → Create a code. You see what is in it before it is used.</p>
+          </div>
+          <Button variant="secondary" icon={<KeyRound size={16} />} onClick={() => setUsingCode(true)}>
+            Enter code
+          </Button>
+        </div>
+
+        <div className="onboarding__option">
+          <div>
             <h2 className="onboarding__option-title">Setting up another PC?</h2>
             <p className="onboarding__option-text">Restore a ROVE backup (Settings → Data → Back up) to get the same addons, profiles and layout.</p>
           </div>
@@ -76,6 +88,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         </div>
       </div>
       <ReplaceAddonDialog state={adding} />
+      <UseCodeDialog open={usingCode} onClose={() => setUsingCode(false)} firstRun />
     </main>
   );
 }

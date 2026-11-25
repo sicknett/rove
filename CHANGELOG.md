@@ -5,6 +5,39 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+## 0.3.1 — 2026-11-25
+
+**Added**
+- Share your setup with a code. Settings → Data → Create a code makes a short code (45 letters
+  and digits). A friend enters it in their ROVE, in Settings → Data → Use a code or on first
+  start, and gets your addons, profiles, settings, Home layout and collections. They see what
+  the code holds and confirm before anything is replaced.
+- What is and is not shared: watch history, recent searches, profile PINs, per-show audio and
+  subtitle choices and the external player never are. API keys and sign-ins are included only
+  if you switch that on, and such a code lasts one day. Addon links are always included, and a
+  link can carry that addon's own keys: that is how the friend gets the same addons.
+- Where the copy is kept: it is encrypted on your PC and stored at paste.unredacted.org
+  (privatebin.net if that is unreachable), public services built to hold text they cannot read.
+  Only someone with the code can open it. It is deleted by itself after at most a week, and Stop
+  sharing deletes it at once.
+- A setup that arrives by code cannot set a profile PIN, a profile picture from the web or an
+  external player on the PC that receives it.
+
+**Checked**
+- Between two test copies of this build, each with its own data folder and only the default
+  setup: one made a code in Settings → Data ([Data](docs/screenshots/settings-data.jpg)); the
+  other, on its first start, took the code typed in lower case with spaces, showed what it held
+  ([Use this setup?](docs/screenshots/share-use.jpg)), applied it and opened on a Home with the
+  shared collections; Stop sharing in the first then made the code answer "There is nothing at
+  paste.unredacted.org for this code any more".
+- 555 unit tests pass, among them: the code's check characters catch a wrong or swapped
+  character; a tampered copy is refused; a copy made without keys holds none of the test keys;
+  a code can only reach the two services.
+- Windows Defender finds nothing in the program or the Setup.
+- Not checked: a code carrying real keys or real addons (the tests use made-up ones); the
+  fallback service from inside the app (tried only from outside it); the Copy button; two
+  different PCs.
+
 ## 0.3.0 — 2026-11-25
 
 **Added**

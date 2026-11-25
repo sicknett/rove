@@ -2,7 +2,7 @@
 // at the end, the one thing here that removes something for good.
 
 import { useRef, useState } from 'react';
-import { Download, FolderOpen, Trash2, Upload } from 'lucide-react';
+import { Download, FolderOpen, KeyRound, Share2, Trash2, Upload } from 'lucide-react';
 import { readBackup, restoreBackup, saveBackup } from '../../lib/backup';
 import { useQueryClient } from '@tanstack/react-query';
 import { invalidate } from '../../lib/http';
@@ -14,6 +14,7 @@ import { Button, Dialog, Switch } from '../../ui/controls';
 import { toast } from '../../ui/toast';
 import { count } from './format';
 import { Group, SettingRow } from './parts';
+import { CreateCodeDialog, UseCodeDialog } from './share';
 
 export function DataSection() {
   const qc = useQueryClient();
@@ -24,6 +25,9 @@ export function DataSection() {
   // A chosen backup waits here until the user confirms: restoring replaces this PC's setup.
   const [chosen, setChosen] = useState<ReturnType<typeof readBackup> | null>(null);
   const [restoring, setRestoring] = useState(false);
+  // Sharing with a code: its own switch for keys, off every time this page opens.
+  const [shareKeys, setShareKeys] = useState(false);
+  const [sharing, setSharing] = useState<'create' | 'use' | null>(null);
   const tracker = useTracker((s) => s.account?.provider);
   // Named once there is more than one profile, so it is clear whose history goes.
   const profileName = useProfiles((s) => (s.profiles.length > 1 ? s.profiles.find((p) => p.id === s.activeId)?.name : undefined));
@@ -84,6 +88,25 @@ export function DataSection() {
         </SettingRow>
       </Group>
 
+      <Group
+        title="Share your setup"
+        note="A code gives a friend your addons, profiles, settings, Home layout and collections. ROVE encrypts a copy on this PC and keeps it at paste.unredacted.org (privatebin.net if that one does not answer) for up to a week. Those services cannot read it: the key is only in the code, so only someone with the code can. Addon links are shared as they are, and a link can carry that addon’s configuration and its keys. Watch history, recent searches and profile PINs stay on this PC."
+      >
+        <SettingRow id="data.shareKeys">
+          <Switch checked={shareKeys} onChange={setShareKeys} label="Include API keys and sign-ins" />
+        </SettingRow>
+        <SettingRow id="data.shareCreate" hint={shareKeys ? 'Makes a code for your setup with your keys and sign-ins. You see what is shared before anything is sent.' : 'Makes a code for your setup, without keys or sign-ins. You see what is shared before anything is sent.'}>
+          <Button variant="secondary" icon={<Share2 size={16} />} onClick={() => setSharing('create')}>
+            Create a code…
+          </Button>
+        </SettingRow>
+        <SettingRow id="data.shareUse">
+          <Button variant="secondary" icon={<KeyRound size={16} />} onClick={() => setSharing('use')}>
+            Use a code…
+          </Button>
+        </SettingRow>
+      </Group>
+
       <Group title="Storage">
         <SettingRow id="data.cache">
           <Button
@@ -125,6 +148,8 @@ export function DataSection() {
         </SettingRow>
       </Group>
 
+      <CreateCodeDialog open={sharing === 'create'} includeKeys={shareKeys} onClose={() => setSharing(null)} />
+      <UseCodeDialog open={sharing === 'use'} onClose={() => setSharing(null)} />
       <Dialog
         open={!!chosen}
         onClose={() => !restoring && setChosen(null)}
