@@ -1,4 +1,4 @@
-import { Check, Minus, Plus } from 'lucide-react';
+import { Check, ChevronLeft, Minus, Plus } from 'lucide-react';
 import { mpv } from '../bridge';
 import { channelLabel, languageName } from '../format';
 import { useSettings } from '../state/settings';
@@ -150,13 +150,27 @@ export function SubtitleMenu() {
   );
 }
 
+/**
+ * The heading of a menu that opened out of another one: it is the way back to that menu.
+ * Without `onBack` it is a plain heading.
+ */
+function MenuHeading({ title, onBack }: { title: string; onBack?: () => void }) {
+  if (!onBack) return <h3 className="menu__heading">{title}</h3>;
+  return (
+    <button className="menu__back" onClick={onBack} aria-label={`Back from ${title}`}>
+      <ChevronLeft size={17} />
+      <span>{title}</span>
+    </button>
+  );
+}
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
-export function SpeedMenu() {
+export function SpeedMenu({ onBack }: { onBack?: () => void }) {
   const speed = usePlayer((s) => s.speed);
   return (
     <div className="menu menu--narrow" role="menu" onPointerDown={stop}>
-      <h3 className="menu__heading">Speed</h3>
+      <MenuHeading title="Speed" onBack={onBack} />
       {SPEEDS.map((v) => {
         const on = Math.abs(speed - v) < 0.001;
         return (
@@ -179,7 +193,7 @@ const ASPECTS: { id: string; label: string; apply: () => void }[] = [
   { id: '2.39:1', label: '2.39:1', apply: () => (mpv.set('video-aspect-override', '2.39:1'), mpv.set('panscan', 0), mpv.set('video-zoom', 0)) },
 ];
 
-export function VideoMenu() {
+export function VideoMenu({ onBack }: { onBack?: () => void }) {
   const hwdec = useSettings((s) => s.settings.playback.hwdec);
   const setSettings = useSettings((s) => s.set);
   const current = usePlayer((s) => s.hwdec);
@@ -187,7 +201,7 @@ export function VideoMenu() {
   const aspect = usePlayer((s) => s.aspect);
   return (
     <div className="menu" role="menu" onPointerDown={stop}>
-      <h3 className="menu__heading">Picture</h3>
+      <MenuHeading title="Picture" onBack={onBack} />
       {ASPECTS.map((a) => (
         <button
           key={a.id}

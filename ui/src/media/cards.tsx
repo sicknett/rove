@@ -1,5 +1,5 @@
 import { tmdbResized } from '../meta/tmdb';
-import { memo } from 'react';
+import { memo, useContext, useRef, useState } from 'react';
 import { Check, Play, Star } from 'lucide-react';
 import { Img } from '../ui/Img';
 import { ProgressLine, type MenuItem } from '../ui/controls';
@@ -11,6 +11,10 @@ import { useSettings } from '../state/settings';
 import { useInWatchlist } from '../library/watchlist';
 import { canonicalNow } from '../tracking/idmap';
 import { formatTime } from '../format';
+import { playTitle } from '../player/launch';
+import { CardPreview, type PreviewState } from './CardPreview';
+import { RowContext } from './Row';
+import { armPreview, disarmPreview, previewArt, previewsOn } from './preview';
 
 function Monogram({ name }: { name?: string }) {
   return (
@@ -38,8 +42,17 @@ interface PosterProps {
   menuExtra?: () => (MenuItem | 'divider')[];
 }
 
-/** A 2:3 poster with title below; watched tick and progress when known. */
+/**
+ * A 2:3 poster with title below; watched tick and progress when known. In a row (media/Row) it
+ * opens into a preview with the title's trailer when the pointer rests on it; in a grid, with
+ * the setting off or with motion reduced, it does not.
+ */
 export const PosterCard = memo(function PosterCard({ title, progress, onPlay, subtitle, continueKey, season, episode, menuExtra }: PosterProps) {
+  const row = useContext(RowContext);
+  const root = useRef<HTMLDivElement>(null);
+  const [preview, setPreview] = useState<PreviewState>('closed');
+  // Where on the screen the pointer was when the preview opened: the row keeps the card under it.
+  const [openedAt, setOpenedAt] = useState(0);
   // History keeps a title under its IMDb id when that is known; a card may carry its `tmdb:` id.
   const watched = useHistory((s) => title.type === 'movie' && !!s.watched[canonicalNow(title.metaId, 'movie')]);
   const inList = useInWatchlist(title.metaId, title.type);
@@ -48,9 +61,43 @@ export const PosterCard = memo(function PosterCard({ title, progress, onPlay, su
   const open = () => navigate({ name: 'title', type: title.type, id: title.metaId });
   const plays = !!continueKey && !!onPlay;
   const sub = subtitle ?? (title.year ? String(title.year).slice(0, 9) : undefined);
+  // The pointer has come onto the poster: it opens if it rests there (preview.ts). Not for a
+  // touch, nor with a button held (a drag passing over). Focus does not open it: that would
+  // fire all along a row being tabbed through.
+  const arm = (e: React.PointerEvent<HTMLElement>) => {
+    if (preview === 'open' || e.pointerType === 'touch' || e.buttons || !previewsOn()) return;
+    armPreview(
+      e.currentTarget,
+      e.clientX,
+      (pointerX) => {
+        setOpenedAt(pointerX);
+        setPreview('open');
+      },
+      () => {
+        const art = previewArt(title.background);
+        if (art) new Image().src = art;
+      },
+    );
+  };
+  const leave = () => {
+    disarmPreview();
+    if (preview === 'open') setPreview('closing');
+  };
   return (
-    <div className="card card--poster" onContextMenu={(e) => openContextMenu(e, [...titleMenu(title, { onPlay, continueKey, season, episode }), ...(menuExtra?.() ?? [])])}>
-      <button className="card__frame" onClick={plays ? onPlay : open} aria-label={plays ? `Play ${title.name ?? ''} ${subtitle ?? ''}` : title.name}>
+    <div
+      ref={root}
+      className={`card card--poster${preview !== 'closed' ? ' card--preview' : ''}${preview === 'open' ? ' is-expanded' : ''}`}
+      onContextMenu={(e) => openContextMenu(e, [...titleMenu(title, { onPlay, continueKey, season, episode }), ...(menuExtra?.() ?? [])])}
+      onPointerLeave={row ? leave : undefined}
+    >
+      <button
+        className="card__frame"
+        onClick={plays ? onPlay : open}
+        aria-label={plays ? `Play ${title.name ?? ''} ${subtitle ?? ''}` : title.name}
+        onPointerEnter={row ? arm : undefined}
+        onPointerLeave={row ? disarmPreview : undefined}
+        onPointerDown={row ? disarmPreview : undefined}
+      >
         <Img src={title.poster} alt="" className="card__img" fallback={<Monogram name={title.name} />} />
         <span className="card__shine" aria-hidden />
         {watched && (
@@ -70,6 +117,10 @@ export const PosterCard = memo(function PosterCard({ title, progress, onPlay, su
           </span>
         )}
       </button>
+      {/* Over the frame, not in it: it has buttons of its own. A click on the picture still reaches the frame. */}
+      {row && preview !== 'closed' && (
+        <CardPreview title={title} card={root} row={row} pointerX={openedAt} inList={inList} closing={preview === 'closing'} onPlay={onPlay ?? (() => void playTitle(title.type, title.metaId, title))} onState={setPreview} />
+      )}
       <div className="card__caption">
         {plays ? (
           <button className="card__name card__name--link" onClick={open} title={title.name}>

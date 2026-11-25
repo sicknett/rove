@@ -3,13 +3,13 @@
 import { mpv } from '../bridge';
 import { debouncedWriter, docs } from '../lib/native';
 import { profileDoc } from '../state/profiles';
-import { settingsNow, type Settings } from '../state/settings';
+import { settingsNow, type Settings, subtitleFont } from '../state/settings';
 import type { Track } from './store';
 
 /** Pushes the player-facing settings into mpv (on start and whenever they change). */
 export function applyPlayerSettings(s: Settings = settingsNow()) {
   const st = s.subtitleStyle;
-  mpv.set('sub-font', st.font || 'Inter');
+  mpv.set('sub-font', subtitleFont(st.font));
   mpv.set('sub-font-size', st.size);
   mpv.set('sub-color', st.color);
   mpv.set('sub-bold', st.bold);

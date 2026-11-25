@@ -9,6 +9,7 @@ import { useServers } from '../../servers/store';
 import { SERVER_KIND_NAMES, type MediaServer, type ServerKind, type ServerLibrary } from '../../servers/types';
 import { Button, Segmented, Switch, TextField } from '../../ui/controls';
 import { toast } from '../../ui/toast';
+import { count, hostOf } from './format';
 import { Group, SettingRow } from './parts';
 
 type NewServer = Omit<MediaServer, 'id' | 'addedAt' | 'enabled'>;
@@ -29,6 +30,7 @@ export function ServersSection() {
   return (
     <>
       <Group
+        id="servers.list"
         title="Your servers"
         note="Titles on your servers show up on Home, in Search and as sources next to your addons, so the same movie or episode is one title whether it comes from a server or an addon. ROVE plays the original file directly and tells the server where you stopped. Sign-ins are stored encrypted for your Windows account and shared by every profile."
       >
@@ -50,7 +52,7 @@ function ServerRow({ server, index }: { server: MediaServer; index: number }) {
     setBusy(true);
     try {
       const libraries = await store.refresh(server.id);
-      toast.success(`${server.name}: ${libraries.length} ${libraries.length === 1 ? 'library' : 'libraries'}`);
+      toast.success(`${server.name}: ${count(libraries.length, 'library', 'libraries')}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : `${server.name} could not be reached.`);
     } finally {
@@ -60,7 +62,7 @@ function ServerRow({ server, index }: { server: MediaServer; index: number }) {
   return (
     <SettingRow
       label={`${server.name} · ${SERVER_KIND_NAMES[server.kind]}`}
-      hint={`${server.userName ? `${server.userName} · ` : ''}${libs.length ? libs.map((l) => l.name).join(', ') : 'No libraries found'} · ${hostOf(server.url)}`}
+      hint={`${server.enabled ? '' : 'Switched off · '}${server.userName ? `${server.userName} · ` : ''}${libs.length ? libs.map((l) => l.name).join(', ') : 'No libraries found'} · ${hostOf(server.url)}`}
     >
       <Switch checked={server.enabled} onChange={(v) => store.update(server.id, { enabled: v })} label={`Use ${server.name}`} />
       <Button variant="ghost" icon={<RefreshCw size={16} className={busy ? 'spin' : ''} />} disabled={busy} onClick={() => void refresh()}>
@@ -83,7 +85,7 @@ function ServerRow({ server, index }: { server: MediaServer; index: number }) {
 function AddServer() {
   const [kind, setKind] = useState<ServerKind>('jellyfin');
   return (
-    <Group title="Add a server">
+    <Group id="servers.add" title="Add a server">
       <SettingRow label="Server type" hint={kind === 'silo' ? 'Silo servers speak the same language as Jellyfin.' : kind === 'plex' ? 'Sign in with your Plex account, then pick a server.' : 'Sign in with your username and password, or Quick Connect where the server has it on.'} stacked>
         <Segmented label="Server type" value={kind} onChange={setKind} options={(['jellyfin', 'emby', 'silo', 'plex'] as ServerKind[]).map((k) => ({ value: k, label: SERVER_KIND_NAMES[k] }))} />
       </SettingRow>
@@ -160,7 +162,7 @@ function JellyfinSignIn({ kind }: { kind: ServerKind }) {
     return (
       <SettingRow label="Server address" hint={error ?? 'For example http://192.168.1.20:8096 or https://media.example.com'} stacked>
         <div className="inline-form">
-          <TextField value={url} onChange={setUrl} placeholder="http://server:8096" onKeyDown={(e) => e.key === 'Enter' && url.trim() && void check()} />
+          <TextField value={url} onChange={setUrl} placeholder="http://server:8096" aria-label="Server address" onKeyDown={(e) => e.key === 'Enter' && url.trim() && void check()} />
           <Button variant="primary" busy={busy} disabled={!url.trim()} onClick={() => void check()}>
             Continue
           </Button>
@@ -202,8 +204,8 @@ function JellyfinSignIn({ kind }: { kind: ServerKind }) {
       </SettingRow>
       <SettingRow label="Sign in" hint={error ?? (info.kind === 'silo' ? 'Silo profiles sign in as user#profile.' : undefined)} stacked>
         <div className="inline-form inline-form--wrap">
-          <TextField value={user} onChange={setUser} placeholder="Username" />
-          <TextField value={pass} onChange={setPass} placeholder="Password" secret onKeyDown={(e) => e.key === 'Enter' && user.trim() && void signIn()} />
+          <TextField value={user} onChange={setUser} placeholder="Username" aria-label="Username" />
+          <TextField value={pass} onChange={setPass} placeholder="Password" aria-label="Password" secret onKeyDown={(e) => e.key === 'Enter' && user.trim() && void signIn()} />
           <Button variant="primary" busy={busy} disabled={!user.trim()} onClick={() => void signIn()}>
             Sign in
           </Button>
@@ -315,12 +317,4 @@ function PlexSignIn() {
       </Button>
     </SettingRow>
   );
-}
-
-function hostOf(url: string) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
 }

@@ -2,8 +2,9 @@
 // then does depends on the build (shell/src/update.rs):
 // - a code-signed build installs it itself: the shell downloads the Setup, checks it against the
 //   release signature, and runs it as the app closes;
-// - any other build opens the download page, and the user runs the Setup. (An unsigned program
-//   that fetches and starts an installer is quarantined by Windows Defender as a dropper.)
+// - any other build hands the Setup's own download link to the browser, which downloads the file
+//   straight away (no web page to click through), and the user runs it. ROVE itself must not
+//   fetch or start it: Windows Defender quarantines an unsigned program that does as a dropper.
 
 import { create } from 'zustand';
 import { inShell, send } from '../bridge';
@@ -69,7 +70,7 @@ interface UpdateState {
   checkedAt: number | null;
   received: number;
   total: number;
-  /** This build installs updates itself; otherwise the Update button opens the download page. */
+  /** This build installs updates itself; otherwise the Update button downloads the Setup through the browser. */
   selfUpdate: boolean;
   /** Looks for a newer release. Quiet checks (at start) keep errors to themselves. */
   check: (quiet?: boolean) => Promise<void>;
@@ -110,8 +111,11 @@ export const useUpdate = create<UpdateState>((set, get) => ({
     const { release, status, selfUpdate } = get();
     if (!release || status === 'downloading' || status === 'installing') return;
     if (!inShell) return set({ status: 'error', error: 'Updates install from the ROVE app, not from a browser.' });
-    // The user downloads and runs the Setup; it installs over this copy and keeps everything.
-    if (!selfUpdate) return send({ t: 'open-external', url: DOWNLOAD_PAGE });
+    // The browser downloads the Setup itself; the user runs it, and it installs over this copy.
+    if (!selfUpdate) {
+      const direct = release.url.startsWith(`https://github.com/${RELEASES_REPO}/releases/download/`);
+      return send({ t: 'open-external', url: direct ? release.url : DOWNLOAD_PAGE });
+    }
     set({ status: 'downloading', error: null, received: 0, total: 0 });
     const poll = window.setInterval(() => {
       void fetch('/__api/update/progress')

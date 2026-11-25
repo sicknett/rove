@@ -310,7 +310,7 @@ function NoHomeRows({ reason }: { reason: 'off' | 'kept-off' | 'none' }) {
             Home layout
           </Button>
         ) : reason === 'kept-off' ? (
-          <Button variant="secondary" icon={<Compass size={16} />} onClick={() => navigate({ name: 'discover' })}>
+          <Button variant="secondary" icon={<Compass size={16} />} onClick={() => navigate({ name: 'discover', mode: 'catalogs' })}>
             Open Discover
           </Button>
         ) : (

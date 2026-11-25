@@ -10,15 +10,12 @@ import { checkTmdbKey } from '../../meta/tmdb';
 import { Button, Segmented, TextField } from '../../ui/controls';
 import { toast } from '../../ui/toast';
 import { AssistantCard } from '../../ai/AssistantCard';
+import { ago, hostOf } from './format';
 import { Group, SettingRow } from './parts';
 
-function ago(ms: number | null) {
-  if (!ms) return 'never';
-  const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
+// Settings → Accounts: the services ROVE signs in to for you. One tracker per profile; the AI
+// assistant and the TMDB key serve every profile. (Where titles and streams come from is under
+// Addons and Media servers.)
 
 export function AccountsSection() {
   return (
@@ -31,7 +28,7 @@ export function AccountsSection() {
 }
 
 const TRACKERS: { id: TrackerId; label: string; blurb: string }[] = [
-  { id: 'pmdb', label: 'PublicMetaDB', blurb: 'History, progress and watchlist, plus skip times and id mapping. Works with apps like Strand.' },
+  { id: 'pmdb', label: 'PublicMetaDB', blurb: 'History, progress and watchlist, plus community skip times. Works with apps like Strand.' },
   { id: 'trakt', label: 'Trakt', blurb: 'History, progress and watchlist. Sign in with a short code at trakt.tv.' },
   { id: 'simkl', label: 'Simkl', blurb: 'History, progress and plan-to-watch. Sign in with a short code at simkl.com.' },
   { id: 'mdblist', label: 'MDBList', blurb: 'History, progress and watchlist with your MDBList API key.' },
@@ -42,10 +39,19 @@ function TrackerCard() {
   const [pick, setPick] = useState<TrackerId>('pmdb');
   const info = TRACKERS.find((x) => x.id === (t.account?.provider ?? pick))!;
 
+  const disconnect = async () => {
+    const was = t.account;
+    if (!was) return;
+    await t.disconnect();
+    // Signing in again would need the key or a new code; Undo puts the same sign-in back and syncs.
+    toast.info(`${info.label} disconnected. Your history stays on this PC.`, { label: 'Undo', run: () => void useTracker.getState().setAccount(was) });
+  };
+
   return (
     <Group
+      id="accounts.tracker"
       title="Tracking"
-      note="ROVE always keeps your Continue Watching, history and watchlist on this PC. Connect one tracker per profile and every change syncs both ways, so your other devices and apps stay in step. Sign-ins are stored encrypted for your Windows account."
+      note="ROVE always keeps Continue Watching, history and your watchlist on this PC. Connect one tracker per profile and every change syncs both ways, so your other devices and apps stay in step. Sign-ins are stored encrypted for your Windows account."
     >
       {t.account ? (
         <SettingRow
@@ -53,13 +59,13 @@ function TrackerCard() {
           hint={
             t.state === 'syncing'
               ? 'Syncing…'
-              : t.message ?? `Last sync ${ago(t.lastSyncAt)}${t.counts ? ` · ${t.counts.resume} in progress · ${t.counts.watched} watched` : ''}`
+              : t.message ?? `${t.lastSyncAt ? `Last synced ${ago(t.lastSyncAt)}` : 'Not synced yet'}${t.counts ? ` · ${t.counts.resume} in progress · ${t.counts.watched} watched` : ''}`
           }
         >
           <Button variant="secondary" icon={<RefreshCw size={16} className={t.state === 'syncing' ? 'spin' : ''} />} disabled={t.state === 'syncing'} onClick={() => void syncNow()}>
             Sync now
           </Button>
-          <Button variant="ghost" icon={<Unplug size={16} />} onClick={() => void t.disconnect()}>
+          <Button variant="ghost" icon={<Unplug size={16} />} onClick={() => void disconnect()}>
             Disconnect
           </Button>
         </SettingRow>
@@ -115,9 +121,7 @@ function DeviceConnect({ provider, name }: { provider: 'trakt' | 'simkl'; name: 
 
   if (!trackerAvailable(provider))
     return (
-      <SettingRow label={`${name} is not set up in this build`} hint={`${name} sign-in needs ROVE\u2019s ${name} app id, which is added when ROVE is built.`}>
-        <span />
-      </SettingRow>
+      <SettingRow label={`${name} is not set up in this build`} hint={`${name} sign-in needs ROVE\u2019s ${name} app id, which is added when ROVE is built.`} />
     );
 
   const start = async () => {
@@ -177,14 +181,6 @@ function DeviceConnect({ provider, name }: { provider: 'trakt' | 'simkl'; name: 
   );
 }
 
-function hostOf(url: string) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
 function TmdbCard() {
   const current = useKeys((s) => s.tmdbApiKey);
   const setKey = useKeys((s) => s.setTmdbApiKey);
@@ -212,23 +208,30 @@ function TmdbCard() {
     }
   };
 
+  const remove = () => {
+    const was = current;
+    void setKey(null);
+    if (was) toast.info(BUILT_IN_TMDB_KEY ? 'Your TMDB key is removed. ROVE’s own key is in use again.' : 'Your TMDB key is removed', { label: 'Undo', run: () => void useKeys.getState().setTmdbApiKey(was) });
+  };
+
   return (
     <Group
+      id="accounts.tmdb"
       title="TMDB"
       note={
         BUILT_IN_TMDB_KEY
-          ? 'ROVE includes its own TMDB key for logo art, cast, trailers, recommendations and collections. Add your own only if you want to use your own TMDB quota.'
-          : 'Optional, but it adds logo art, cast, trailers, recommendations and age ratings. A free key comes from themoviedb.org → Settings → API.'
+          ? 'Logo art, cast, trailers, recommendations and collections come from TMDB. ROVE includes its own key, so there is nothing to do here unless you would rather use your own TMDB quota. One key serves every profile.'
+          : 'Optional, but it adds logo art, cast, trailers, recommendations and age ratings. A free key comes from themoviedb.org → Settings → API. One key serves every profile.'
       }
     >
       {current ? (
-        <SettingRow label="Key saved" hint={`Ends in …${current.slice(-4)}`}>
-          <Button variant="ghost" onClick={() => void setKey(null)}>
+        <SettingRow label="Using your own key" hint={`Ends in …${current.slice(-4)}.${BUILT_IN_TMDB_KEY ? ' Remove it to go back to ROVE’s key.' : ''}`}>
+          <Button variant="ghost" onClick={remove}>
             Remove
           </Button>
         </SettingRow>
       ) : (
-        <SettingRow label={BUILT_IN_TMDB_KEY ? 'Using ROVE’s key' : 'API key or read token'} hint={BUILT_IN_TMDB_KEY ? 'Paste your own key below to use it instead' : undefined} stacked>
+        <SettingRow label={BUILT_IN_TMDB_KEY ? 'Using ROVE’s key' : 'API key or read token'} hint={BUILT_IN_TMDB_KEY ? 'Paste your own key to use it instead. TMDB is asked about it before it is saved.' : undefined} stacked>
           <div className="inline-form">
             <TextField value={value} onChange={(v) => (setValue(v), setError(null))} secret placeholder="Paste your TMDB key" error={error} onKeyDown={(e) => e.key === 'Enter' && void save()} />
             <Button variant="primary" busy={busy} disabled={!value.trim()} onClick={() => void save()}>

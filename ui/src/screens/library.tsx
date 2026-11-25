@@ -1,11 +1,12 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { CalendarDays, CheckCircle2, FolderPlus, History as HistoryIcon, Library as LibraryIcon, Pencil, Trash2, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 import { fetchMeta } from '../addons/client';
 import { titleKey } from '../addons/ids';
 import type { MetaPreview } from '../addons/types';
-import { episodesOf, useCardArt, useContinueWatching } from '../data/hooks';
-import { airTime, hasAirClock } from '../library/continue';
+import { episodeGuide, useCardArt, useContinueWatching } from '../data/hooks';
+import { withCard } from '../library/cardArt';
+import { airTime, hasAirClock, type EpisodeRef } from '../library/continue';
 import { PosterGrid } from '../media/Grid';
 import { WideCard } from '../media/cards';
 import { navigate, useNav } from '../nav/router';
@@ -49,6 +50,72 @@ export function Library({ tab = 'watchlist' }: { tab?: Tab }) {
 
 type Sort = 'added' | 'name';
 
+/** What is on screen is measured (and its art asked for) once scrolling has paused this long… */
+const SETTLE_MS = 140;
+/** …or this often while it goes on without a pause. */
+const SETTLE_MAX_MS = 450;
+
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
+    const o = getComputedStyle(n).overflowY;
+    if (o === 'auto' || o === 'scroll') return n;
+  }
+  return null;
+}
+
+/**
+ * Which of a grid's `count` items are on screen or about to be: the part of the grid inside the
+ * scroller's view, with a screen and a bit more after it and most of a screen before (about the
+ * rows the windowed grid keeps drawn). Every row of a grid is the same height, so the share of
+ * its height in view is the share of its items; that holds for the windowed poster grid and for
+ * a plain CSS grid alike, and needs nothing from either. The scroll handler itself only arms a
+ * timer: measuring waits for a pause, so a list flicked through from top to bottom asks for the
+ * art of where it ends up, not of everything it passed.
+ */
+function useVisibleRange<T extends HTMLElement>(count: number) {
+  const ref = useRef<T>(null);
+  // Until it is measured: about a screenful from the top.
+  const [range, setRange] = useState({ from: 0, to: 24 });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !count) return;
+    const scroller = scrollParent(el);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let latest: ReturnType<typeof setTimeout> | undefined;
+    const measure = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (latest !== undefined) clearTimeout(latest);
+      timer = latest = undefined;
+      const box = el.getBoundingClientRect();
+      if (!(box.height > 0)) return;
+      const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const screen = view.bottom - view.top;
+      const from = Math.max(0, Math.floor(((view.top - screen * 0.75 - box.top) / box.height) * count));
+      const to = Math.min(count, Math.ceil(((view.bottom + screen * 1.25 - box.top) / box.height) * count));
+      setRange((prev) => (prev.from === from && prev.to === to ? prev : { from, to: Math.max(from, to) }));
+    };
+    const settle = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(measure, SETTLE_MS);
+      latest ??= setTimeout(measure, SETTLE_MAX_MS);
+    };
+    measure();
+    const target: HTMLElement | Window = scroller ?? window;
+    target.addEventListener('scroll', settle, { passive: true });
+    // The grid's height changes as it lays out and as the window is resized.
+    const ro = new ResizeObserver(settle);
+    ro.observe(el);
+    if (scroller) ro.observe(scroller);
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (latest !== undefined) clearTimeout(latest);
+      target.removeEventListener('scroll', settle);
+      ro.disconnect();
+    };
+  }, [count]);
+  return [ref, range] as const;
+}
+
 function Watchlist() {
   const library = useHistory((s) => s.library);
   const cards = useHistory((s) => s.cards);
@@ -59,15 +126,14 @@ function Watchlist() {
     // fills in) completes it.
     const list = Object.values(library)
       .filter((i) => type === 'all' || i.type === type)
-      .map((i) => {
-        const c = cards[titleKey(i.metaId, i.type)];
-        return { ...i, name: i.name ?? c?.name, poster: i.poster ?? c?.poster, background: i.background ?? c?.background, year: i.year ?? c?.year };
-      });
+      .map((i) => withCard(i, cards));
     list.sort((a, b) => (sort === 'added' ? b.addedAt - a.addedAt : (a.name ?? '').localeCompare(b.name ?? '')));
     return list;
   }, [library, cards, sort, type]);
-  useCardArt(items);
-  const previews: MetaPreview[] = items.map((i) => ({ id: i.metaId, type: i.type, name: i.name ?? '', poster: i.poster, background: i.background, releaseInfo: i.year }));
+  // Art only for what is on screen or about to be.
+  const [gridRef, range] = useVisibleRange<HTMLDivElement>(items.length);
+  useCardArt(items, { range });
+  const previews = useMemo((): MetaPreview[] => items.map((i) => ({ id: i.metaId, type: i.type, name: i.name ?? '', poster: i.poster, background: i.background, releaseInfo: i.year })), [items]);
   if (!Object.keys(library).length) {
     return (
       <Empty icon={<LibraryIcon size={40} />} title="Your Watchlist is empty">
@@ -98,17 +164,21 @@ function Watchlist() {
           ]}
         />
       </div>
-      <PosterGrid items={previews} />
+      <div ref={gridRef}>
+        <PosterGrid items={previews} />
+      </div>
     </>
   );
 }
 
 function ContinueGrid() {
-  const { items, loading } = useContinueWatching(200);
-  useCardArt(items.map((i) => ({ metaId: i.metaId, type: i.type, name: i.name, poster: i.poster })));
+  const { items, loading } = useContinueWatching(200, { art: false });
+  const [gridRef, range] = useVisibleRange<HTMLDivElement>(items.length);
+  // Wide cards show the title's logo, so that is asked for too.
+  useCardArt(items, { range, logo: true });
   if (!items.length && !loading) return <Empty title="Nothing in progress">Start something and it shows up here, and on Home.</Empty>;
   return (
-    <div className="wide-grid">
+    <div className="wide-grid" ref={gridRef}>
       {items.map((it) => (
         <WideCard
           key={`${it.type}:${it.metaId}`}
@@ -133,20 +203,24 @@ function HistoryGrid() {
   const [type, setType] = useState<'all' | 'movie' | 'series'>('all');
   const titles = useMemo(() => {
     // One entry per title. A `tmdb:` id is a different title as a movie and as a show.
-    const latest = new Map<string, { metaId: string; type: 'movie' | 'series'; at: number; count: number }>();
+    const latest = new Map<string, { metaId: string; type: 'movie' | 'series'; at: number; count: number; tmdbId?: number }>();
     for (const w of Object.values(watched)) {
       const key = titleKey(w.metaId, w.type);
       const prev = latest.get(key);
-      latest.set(key, { metaId: w.metaId, type: w.type, at: Math.max(prev?.at ?? 0, w.at), count: (prev?.count ?? 0) + 1 });
+      latest.set(key, { metaId: w.metaId, type: w.type, at: Math.max(prev?.at ?? 0, w.at), count: (prev?.count ?? 0) + 1, tmdbId: prev?.tmdbId ?? w.tmdbId });
     }
     return [...latest.values()].filter((t) => type === 'all' || t.type === type).sort((a, b) => b.at - a.at);
   }, [watched, type]);
-  const withArt = titles.map((t) => {
-    const c = cards[titleKey(t.metaId, t.type)];
-    return { ...t, name: c?.name, poster: c?.poster };
-  });
-  // The whole list: the art is fetched a few titles at a time, from the top (see useCardArt).
-  useCardArt(withArt);
+  // A watched mark carries no art: all of it is the remembered card.
+  const withArt = useMemo(() => titles.map((t) => withCard(t, cards)), [titles, cards]);
+  // Art only for what is on screen or about to be, wherever in the list that is: the long tail
+  // of an old history is not waited on, and does not wait for everything above it.
+  const [gridRef, range] = useVisibleRange<HTMLDivElement>(withArt.length);
+  useCardArt(withArt, { range });
+  const previews = useMemo(
+    (): MetaPreview[] => withArt.map((t) => ({ id: t.metaId, type: t.type, name: t.name ?? '', poster: t.poster, releaseInfo: t.type === 'series' ? `${t.count} episode${t.count > 1 ? 's' : ''}` : new Date(t.at).toLocaleDateString() })),
+    [withArt],
+  );
   if (!titles.length) return <Empty icon={<HistoryIcon size={40} />} title="No history yet">Finished movies and episodes appear here. Connect PublicMetaDB in Settings to bring in your history.</Empty>;
   return (
     <>
@@ -162,7 +236,9 @@ function HistoryGrid() {
           ]}
         />
       </div>
-      <PosterGrid items={withArt.map((t) => ({ id: t.metaId, type: t.type, name: t.name ?? '', poster: t.poster, releaseInfo: t.type === 'series' ? `${t.count} episode${t.count > 1 ? 's' : ''}` : new Date(t.at).toLocaleDateString() }))} />
+      <div ref={gridRef}>
+        <PosterGrid items={previews} />
+      </div>
     </>
   );
 }
@@ -269,12 +345,13 @@ export function Calendar() {
   const metas = useQueries({ queries: shows.map((id) => ({ queryKey: ['meta', 'series', id, 'cw'], queryFn: ({ signal }: { signal: AbortSignal }) => fetchMeta('series', id, signal), staleTime: 3 * 3600 * 1000 })) });
   const now = Date.now();
   const entries = useMemo(() => {
-    const out: { date: number; metaId: string; name: string; poster?: string; background?: string; ep: ReturnType<typeof episodesOf>[number]; meta: NonNullable<(typeof metas)[number]['data']> }[] = [];
+    const out: { date: number; metaId: string; name: string; poster?: string; background?: string; ep: EpisodeRef; meta: NonNullable<(typeof metas)[number]['data']> }[] = [];
     metas.forEach((q, i) => {
       const m = q.data;
       if (!m) return;
-      for (const ep of episodesOf(m)) {
-        if (ep.season === 0 || !ep.released) continue;
+      // The running order: specials and a season's extras are not new episodes.
+      for (const ep of episodeGuide(m).main) {
+        if (!ep.released) continue;
         // A date with no time of day is that calendar day here, not midnight UTC (see airTime).
         const d = airTime(ep.released);
         if (!Number.isFinite(d)) continue;
@@ -325,7 +402,7 @@ export function Calendar() {
                   const isWatched = !!watched[`${e.metaId}:${e.ep.season}:${e.ep.episode}`];
                   const aired = e.date <= now;
                   return (
-                    <article key={`${e.metaId}-${e.ep.id}`} className="cal-item">
+                    <article key={`${e.metaId}-${e.ep.key ?? e.ep.id}`} className="cal-item">
                       <button className="cal-item__thumb" onClick={() => (aired ? void playEpisode(e.meta, e.metaId, e.ep) : navigate({ name: 'title', type: 'series', id: e.metaId, season: e.ep.season }))}>
                         <Img src={e.ep.thumbnail ?? e.background} alt="" className="cal-item__img" fallback={<span className="card__monogram">{e.name[0]}</span>} />
                         {isWatched && (

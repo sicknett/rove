@@ -331,3 +331,56 @@ describe('load', () => {
     expect(saves.length).toBeGreaterThan(0);
   });
 });
+
+describe('card art', () => {
+  const P = 'https://image.tmdb.org/t/p/w342/p.jpg';
+
+  it('remembers many cards in one change and one write', () => {
+    let changes = 0;
+    const stop = useHistory.subscribe(() => changes++);
+    h().rememberCards([
+      { metaId: 'tt1', type: 'movie', card: { name: 'One', poster: P } },
+      { metaId: 'tmdb:7', type: 'series', card: { name: 'Seven', poster: P, background: undefined } },
+    ]);
+    stop();
+    expect(changes).toBe(1);
+    expect(saves).toHaveLength(1);
+    expect(h().cards).toEqual({ tt1: { name: 'One', poster: P, type: 'movie' }, 'tmdb:7@series': { name: 'Seven', poster: P, type: 'series' } });
+  });
+
+  it('adds to what a card already holds, and writes nothing when nothing is new', () => {
+    h().rememberCard('tt1', 'movie', { name: 'One', logo: 'https://x/logo.png' });
+    h().rememberCards([{ metaId: 'tt1', type: 'movie', card: { poster: P, name: undefined } }]);
+    expect(h().cards.tt1).toEqual({ name: 'One', logo: 'https://x/logo.png', poster: P, type: 'movie' });
+    saves.length = 0;
+    h().rememberCards([{ metaId: 'tt1', type: 'movie', card: { poster: P } }]);
+    expect(saves).toHaveLength(0);
+  });
+
+  it('puts a card under the IMDb id once the title maps, where its history is', () => {
+    rememberMapping('tt0000042', { id: 4242, kind: 'tv' });
+    h().rememberCards([{ metaId: 'tmdb:4242', type: 'series', card: { name: 'Mapped', poster: P } }]);
+    expect(h().cards.tt0000042).toMatchObject({ name: 'Mapped' });
+  });
+
+  it('takes a dead picture out of everything that holds it, and leaves the rest alone', () => {
+    const dead = 'https://images.example/poster/gone.jpg';
+    useHistory.setState({
+      cards: { tt1: { name: 'One', poster: dead, background: P, type: 'movie' }, tt2: { name: 'Two', poster: P, type: 'movie' } },
+      library: { tt1: { metaId: 'tt1', type: 'movie', addedAt: 5, name: 'One', poster: dead } },
+      progress: { tt1: resume('tt1', 1000, { poster: dead, logo: dead, name: 'One' }) },
+    });
+    const before = h().cards.tt2;
+    h().forgetArt([dead]);
+    expect(h().cards.tt1).toEqual({ name: 'One', background: P, type: 'movie' });
+    expect(h().cards.tt2).toBe(before);
+    expect(h().library.tt1).toEqual({ metaId: 'tt1', type: 'movie', addedAt: 5, name: 'One' });
+    expect(h().progress.tt1).toMatchObject({ name: 'One', positionS: 600 });
+    expect(h().progress.tt1.poster).toBeUndefined();
+    expect(h().progress.tt1.logo).toBeUndefined();
+    expect(saves).toHaveLength(1);
+    // Nothing holds it any more: nothing to write.
+    h().forgetArt([dead]);
+    expect(saves).toHaveLength(1);
+  });
+});

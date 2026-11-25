@@ -5,7 +5,7 @@ import {
 import { appWindow, mpv, send, subscribe } from '../bridge';
 import { useSettings, settingsNow } from '../state/settings';
 import { fetchStreams } from '../addons/client';
-import { episodesOf } from '../data/hooks';
+import { episodeGuide } from '../data/hooks';
 import { watchKey } from '../addons/ids';
 import { useHistory } from '../state/history';
 import { Img } from '../ui/Img';
@@ -287,7 +287,9 @@ export function Player() {
           setPip(!pip);
           break;
         case 'Escape':
-          if (menu) setMenu(null);
+          // Speed and Picture opened out of More: Escape goes back to it, then closes it.
+          if (menu === 'speed' || menu === 'video') setMenu('more');
+          else if (menu) setMenu(null);
           else if (s.window.fullscreen) appWindow.fullscreen(false);
           else if (pip) setPip(false);
           break;
@@ -466,8 +468,8 @@ export function Player() {
                     onPip={() => (setPip(true), setMenu(null))}
                   />
                 )}
-                {menu === 'speed' && <SpeedMenu />}
-                {menu === 'video' && <VideoMenu />}
+                {menu === 'speed' && <SpeedMenu onBack={() => setMenu('more')} />}
+                {menu === 'video' && <VideoMenu onBack={() => setMenu('more')} />}
               </div>
               {pip && (
                 <button className="icon-btn is-active" aria-label="Leave picture in picture" data-tip="Leave picture in picture (P)" onClick={() => setPip(false)}>
@@ -698,14 +700,17 @@ function StillWatching({ session }: { session: Session }) {
 }
 
 function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => void }) {
-  const eps = useMemo(() => episodesOf(session.meta), [session.meta]);
-  // Specials (season 0) are listed too, after the numbered seasons.
-  const seasons = [...new Set(eps.map((e) => e.season))].sort((a, b) => (a || Infinity) - (b || Infinity));
+  // The same guide as the title page (library/episodes): numbered seasons, then Specials; in a
+  // season its episodes in order, then the extras the data files there.
+  const groups = useMemo(() => episodeGuide(session.meta).seasons, [session.meta]);
+  const seasons = groups.map((g) => g.season);
   const seasonName = (s: number) => (s === 0 ? 'Specials' : `Season ${s}`);
   const [season, setSeason] = useState(session.target.season ?? seasons[0]);
   const progress = useHistory((s) => s.progress);
   const watched = useHistory((s) => s.watched);
-  const list = eps.filter((e) => e.season === season).sort((a, b) => a.episode - b.episode);
+  const group = groups.find((g) => g.season === season);
+  const list = group ? [...group.episodes, ...group.extras] : [];
+  const firstExtra = group?.extras[0];
   const now = Date.now();
   const listRef = useRef<HTMLUListElement>(null);
   // Opens on the episode that is playing; another season starts at its top.
@@ -714,12 +719,13 @@ function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => 
     if (el) el.scrollIntoView({ block: 'center' });
     else listRef.current?.parentElement?.scrollTo({ top: 0 });
   }, [season]);
-  const count = `${list.length} episode${list.length === 1 ? '' : 's'}`;
+  const shown = group?.episodes.length ?? 0;
+  const count = `${shown} episode${shown === 1 ? '' : 's'}${group?.extras.length ? ` · ${group.extras.length} extra${group.extras.length === 1 ? '' : 's'}` : ''}`;
   // One season picker that never runs off the panel, however many seasons there are.
   const picker =
     seasons.length > 1 ? (
       <span className="ep-seasons">
-        <Select value={season} label="Season" onChange={setSeason} options={seasons.map((s) => ({ value: s, label: seasonName(s), detail: `${eps.filter((e) => e.season === s).length} episodes` }))} />
+        <Select value={season} label="Season" onChange={setSeason} options={groups.map((g) => ({ value: g.season, label: seasonName(g.season), detail: `${g.episodes.length} episodes` }))} />
         <span className="ep-seasons__count">{count}</span>
       </span>
     ) : (
@@ -733,10 +739,10 @@ function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => 
           const current = e.season === session.target.season && e.episode === session.target.episode;
           const upcoming = e.released ? Date.parse(e.released) > now : false;
           const p = progress[key];
-          const video = session.meta?.videos?.find((v) => v.id === e.id);
-          const overview = video?.overview ?? video?.description;
+          const overview = e.overview;
           return (
-            <li key={e.id}>
+            // Keyed by the guide, not the addon's video id: a video listed twice must not leave rows behind.
+            <li key={e.key ?? `${e.season}:${e.episode}:${e.id}`} className={e === firstExtra ? 'ep-list__extras' : undefined}>
               <button
                 className={`ep-item ${current ? 'is-current' : ''} ${watched[key] ? 'is-watched' : ''}`}
                 disabled={upcoming || current}

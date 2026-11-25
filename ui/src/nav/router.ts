@@ -4,9 +4,46 @@
 import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 
+/**
+ * What Discover is narrowed to, as its route carries it. Only what differs from "everything" is
+ * written, in one fixed order (screens/discover/filters.ts `normalize`), so the same filters are
+ * always the same route: `sameRoute` compares routes as they are written out.
+ */
+export interface DiscoverFilters {
+  /** Shows. Movies when absent. */
+  kind?: 'tv';
+  /** TMDB genre numbers, lowest first. A title has to have all of them. */
+  genres?: number[];
+  /** First and last year of release, either or both. */
+  from?: number;
+  to?: number;
+  /** Released within this many days of today. Takes the place of `from` and `to`. */
+  recent?: number;
+  /** The lowest TMDB score, out of 10. */
+  rating?: number;
+  /** Running time in minutes (films). */
+  runtimeMin?: number;
+  runtimeMax?: number;
+  /** How many votes a title has on TMDB, at least and at most (a starting point sets these). */
+  votesMin?: number;
+  votesMax?: number;
+  /** The language it was made in, as TMDB writes it (`en`, `ko`). */
+  language?: string;
+  /** TMDB watch provider numbers, lowest first: on any one of them, in `region`. */
+  providers?: number[];
+  /** The country the providers are looked at in (`US`). Kept only with `providers`. */
+  region?: string;
+  /** Most popular first when absent. */
+  sort?: 'rating' | 'newest' | 'votes';
+}
+
 export type Route =
   | { name: 'home' }
-  | { name: 'discover'; type?: string; catalog?: string; genre?: string }
+  /**
+   * Discover narrows TMDB down by `filters`. With `mode: 'catalogs'` it browses the addons' own
+   * catalogs instead, and `type`, `catalog` and `genre` say which.
+   */
+  | { name: 'discover'; mode?: 'catalogs'; type?: string; catalog?: string; genre?: string; filters?: DiscoverFilters }
   | { name: 'search'; q?: string }
   | { name: 'library'; tab?: 'watchlist' | 'continue' | 'history' | 'collections' }
   | { name: 'calendar' }

@@ -8,6 +8,15 @@ export type AutoPlayMode = 'off' | 'first' | 'binge' | 'regex';
 export type SkipMode = 'off' | 'button' | 'auto';
 export type SubtitleMode = 'off' | 'forced' | 'foreign' | 'always';
 
+/** A face every Windows PC has. The player has no fonts of its own, only the ones installed. */
+export const DEFAULT_SUBTITLE_FONT = 'Segoe UI';
+
+/**
+ * The subtitle font in effect. "Inter" was the default once, but the player never had it (it is
+ * this page's font, not one installed in Windows), so it means the default.
+ */
+export const subtitleFont = (saved: string | undefined) => (!saved || saved === 'Inter' ? DEFAULT_SUBTITLE_FONT : saved);
+
 export interface Settings {
   appearance: {
     accent: 'sage' | 'mist' | 'sand' | 'rose' | 'sky';
@@ -25,6 +34,8 @@ export interface Settings {
     landscapeContinueWatching: boolean;
     /** Home rows made from what the profile watches (recs/): Top picks, Because you watched, Top 10s and the rest. One switch for all of them. */
     smartRows: boolean;
+    /** Resting the pointer on a poster in a row widens it into a preview that plays the title's trailer. */
+    hoverPreview: boolean;
   };
   playback: {
     autoPlayNext: boolean;
@@ -85,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
     navPosition: 'left',
     landscapeContinueWatching: true,
     smartRows: true,
+    hoverPreview: true,
   },
   playback: {
     autoPlayNext: true,
@@ -121,7 +133,7 @@ export const DEFAULT_SETTINGS: Settings = {
     background: 'shadow',
     bold: false,
     marginY: 48,
-    font: 'Inter',
+    font: DEFAULT_SUBTITLE_FONT,
   },
   audio: {
     delayMs: 0,

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bookmark, BookmarkCheck, CheckCircle2, CircleSlash, Clapperboard, Clock, ListVideo, MoreHorizontal, Play, RotateCcw, Star } from 'lucide-react';
 import { isImdbId, titleKey, watchKey } from '../../addons/ids';
 import type { Meta } from '../../addons/types';
-import { asMediaType, episodesOf, useMeta, useTmdb } from '../../data/hooks';
+import { asMediaType, episodeGuide, useMeta, useTmdb } from '../../data/hooks';
 import { airTime, type EpisodeRef } from '../../library/continue';
+import { byOrder, episodeKey, seasonLabel } from '../../library/episodes';
 import { toggleWatchlist } from '../../library/watchlist';
 import { navigate, useNav } from '../../nav/router';
 import { pickEpisode, playEpisode, playMovie, resumePoint } from '../../player/launch';
@@ -225,7 +226,8 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
                 label: 'Mark every aired episode watched',
                 icon: <CheckCircle2 size={16} />,
                 onSelect: () => {
-                  const eps = unwatchedOf(id, episodesOf(meta).filter((e) => e.season > 0 && hasAired(e, Date.now())));
+                  // The running order: a season's extras and the specials are not "every episode".
+                  const eps = unwatchedOf(id, episodeGuide(meta).main.filter((e) => hasAired(e, Date.now())));
                   if (eps.length) h.markWatched(eps.map((e) => ({ metaId: id, type, season: e.season, episode: e.episode })));
                   toast.success(eps.length ? `${eps.length} episode${eps.length > 1 ? 's' : ''} marked watched` : 'Every aired episode is already marked watched');
                 },
@@ -273,33 +275,112 @@ function unwatchedOf(id: string, list: EpisodeRef[]): EpisodeRef[] {
 
 /** `id` is the title's history id (see Title). */
 function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initialSeason?: number }) {
-  const episodes = useMemo(() => episodesOf(meta), [meta]);
-  const seasons = useMemo(() => [...new Set(episodes.map((e) => e.season))].sort((a, b) => (a === 0 ? 1 : b === 0 ? -1 : a - b)), [episodes]);
+  // One guide for the page (library/episodes): seasons in order with Specials last, each with
+  // its episodes and, apart from them, the extras the data files in that season.
+  const guide = useMemo(() => episodeGuide(meta), [meta]);
+  const seasons = guide.seasons;
   const progress = useHistory((s) => s.progress);
   const watched = useHistory((s) => s.watched);
   const pick = useMemo(() => pickEpisode(meta, id), [meta, id, progress, watched]); // eslint-disable-line react-hooks/exhaustive-deps
   const [season, setSeason] = useState<number | undefined>(initialSeason);
-  const current = season ?? pick?.ep.season ?? seasons.find((s) => s > 0) ?? seasons[0];
-  const list = episodes.filter((e) => e.season === current).sort((a, b) => a.episode - b.episode);
+  const wanted = season ?? pick?.ep.season;
+  const group = seasons.find((g) => g.season === wanted) ?? seasons.find((g) => g.season > 0) ?? seasons[0];
   const h = useHistory.getState();
   const now = Date.now();
 
-  if (!episodes.length) return null;
+  if (!group) return null;
+  const current = group.season;
 
   // Over what has aired: a season still running is "watched" once every episode out so far is.
-  const aired = list.filter((e) => hasAired(e, now));
+  // Its extras are not part of that.
+  const aired = group.episodes.filter((e) => hasAired(e, now));
   const seasonWatched = aired.length > 0 && aired.every((e) => watched[watchKey(id, e.season, e.episode)]);
+
+  const row = (e: EpisodeRef, i: number) => {
+    const key = watchKey(id, e.season, e.episode);
+    const p = progress[key];
+    const isWatched = !!watched[key];
+    // A calendar day in local time (see airTime), so it shows as the date the addon gave.
+    const released = airTime(e.released);
+    const upcoming = Number.isFinite(released) && released > now;
+    const isNext = pick?.ep === e;
+    const onPlay = () => (upcoming ? toast.info(`Airs ${new Date(released).toLocaleDateString()}`) : void playEpisode(meta, id, e));
+    return (
+      <article
+        // The guide's key, never the addon's video id: an addon that lists a video twice would
+        // otherwise leave rows of one season standing at the top of the next.
+        key={episodeKey(e, i)}
+        className={`episode ${isWatched ? 'is-watched' : ''} ${upcoming ? 'is-upcoming' : ''} ${isNext ? 'is-next' : ''}`}
+        onContextMenu={(ev) =>
+          openContextMenu(ev, [
+            { label: 'Play', icon: <Play size={16} />, onSelect: onPlay, disabled: upcoming },
+            { label: 'Play from the beginning', icon: <RotateCcw size={16} />, onSelect: () => void playEpisode(meta, id, e, { fromStart: true }), disabled: upcoming || !p },
+            { label: 'Choose a source', icon: <ListVideo size={16} />, onSelect: () => void playEpisode(meta, id, e, { choose: true }), disabled: upcoming },
+            'divider',
+            isWatched
+              ? { label: 'Mark as unwatched', icon: <CircleSlash size={16} />, onSelect: () => h.unmarkWatched([{ metaId: id, type: 'series', season: e.season, episode: e.episode }]) }
+              : { label: 'Mark as watched', icon: <CheckCircle2 size={16} />, onSelect: () => h.markWatched([{ metaId: id, type: 'series', season: e.season, episode: e.episode }]) },
+            {
+              label: 'Mark watched up to here',
+              icon: <CheckCircle2 size={16} />,
+              onSelect: () => {
+                // Every episode before it in the running order; an extra or a special adds itself.
+                const before = guide.main.filter((x) => byOrder(x, e) <= 0);
+                const upto = unwatchedOf(id, e.extra || e.season === 0 ? [...before, e] : before);
+                if (upto.length) h.markWatched(upto.map((x) => ({ metaId: id, type: 'series', season: x.season, episode: x.episode })));
+              },
+            },
+          ])
+        }
+      >
+        <button className="episode__thumb" onClick={onPlay} aria-label={`Play episode ${e.episode}`}>
+          <Img src={e.thumbnail} alt="" className="episode__img" fallback={<span className="episode__noimg">E{e.episode}</span>} />
+          {!upcoming && (
+            <span className="episode__play" aria-hidden>
+              <Play size={18} fill="currentColor" strokeWidth={0} />
+            </span>
+          )}
+          {isWatched && (
+            <span className="episode__watched" title="Watched">
+              <CheckCircle2 size={16} />
+            </span>
+          )}
+          {p && (
+            <span className="episode__progress">
+              <ProgressLine value={p.positionS / p.durationS} />
+            </span>
+          )}
+        </button>
+        <div className="episode__text">
+          <h3 className="episode__title">
+            <span className="episode__num">{e.episode}.</span> {e.title ?? `Episode ${e.episode}`}
+          </h3>
+          <p className="episode__meta">
+            {Number.isFinite(released) && <span>{upcoming ? `Airs ${new Date(released).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : new Date(released).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+            {e.runtime !== undefined && <span>{Math.round(e.runtime)} min</span>}
+            {p && (
+              <span>
+                <Clock size={12} /> {formatTime(p.durationS - p.positionS)} left
+              </span>
+            )}
+          </p>
+          {e.overview && <p className="episode__overview">{e.overview}</p>}
+        </div>
+      </article>
+    );
+  };
+
   return (
     <section className="episodes" aria-label="Episodes">
       <header className="episodes__head">
         {/* A few seasons fit as tabs; more than that would run off the page, so they become one picker. */}
         {seasons.length > SEASON_TABS_MAX ? (
-          <Select value={current} label="Season" onChange={setSeason} options={seasons.map((s) => ({ value: s, label: s === 0 ? 'Specials' : `Season ${s}` }))} />
+          <Select value={current} label="Season" onChange={setSeason} options={seasons.map((g) => ({ value: g.season, label: seasonLabel(g.season) }))} />
         ) : (
           <div className="episodes__seasons" role="tablist" aria-label="Seasons">
-            {seasons.map((s) => (
-              <button key={s} role="tab" aria-selected={s === current} className={`chip ${s === current ? 'is-on' : ''}`} onClick={() => setSeason(s)}>
-                {s === 0 ? 'Specials' : `Season ${s}`}
+            {seasons.map((g) => (
+              <button key={g.season} role="tab" aria-selected={g.season === current} className={`chip ${g.season === current ? 'is-on' : ''}`} onClick={() => setSeason(g.season)}>
+                {seasonLabel(g.season)}
               </button>
             ))}
           </div>
@@ -318,78 +399,20 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
           {seasonWatched ? 'Mark season unwatched' : 'Mark season watched'}
         </Button>
       </header>
-      <div className="episodes__grid">
-        {list.map((e) => {
-          const key = watchKey(id, e.season, e.episode);
-          const p = progress[key];
-          const isWatched = !!watched[key];
-          // A calendar day in local time (see airTime), so it shows as the date the addon gave.
-          const released = airTime(e.released);
-          const upcoming = Number.isFinite(released) && released > now;
-          const v = meta.videos?.find((x) => x.id === e.id);
-          const isNext = pick?.ep.id === e.id;
-          const onPlay = () => (upcoming ? toast.info(`Airs ${new Date(released).toLocaleDateString()}`) : void playEpisode(meta, id, e));
-          return (
-            <article
-              key={e.id}
-              className={`episode ${isWatched ? 'is-watched' : ''} ${upcoming ? 'is-upcoming' : ''} ${isNext ? 'is-next' : ''}`}
-              onContextMenu={(ev) =>
-                openContextMenu(ev, [
-                  { label: 'Play', icon: <Play size={16} />, onSelect: onPlay, disabled: upcoming },
-                  { label: 'Play from the beginning', icon: <RotateCcw size={16} />, onSelect: () => void playEpisode(meta, id, e, { fromStart: true }), disabled: upcoming || !p },
-                  { label: 'Choose a source', icon: <ListVideo size={16} />, onSelect: () => void playEpisode(meta, id, e, { choose: true }), disabled: upcoming },
-                  'divider',
-                  isWatched
-                    ? { label: 'Mark as unwatched', icon: <CircleSlash size={16} />, onSelect: () => h.unmarkWatched([{ metaId: id, type: 'series', season: e.season, episode: e.episode }]) }
-                    : { label: 'Mark as watched', icon: <CheckCircle2 size={16} />, onSelect: () => h.markWatched([{ metaId: id, type: 'series', season: e.season, episode: e.episode }]) },
-                  {
-                    label: 'Mark watched up to here',
-                    icon: <CheckCircle2 size={16} />,
-                    onSelect: () => {
-                      const upto = unwatchedOf(id, episodes.filter((x) => x.season > 0 && (x.season < e.season || (x.season === e.season && x.episode <= e.episode))));
-                      if (upto.length) h.markWatched(upto.map((x) => ({ metaId: id, type: 'series', season: x.season, episode: x.episode })));
-                    },
-                  },
-                ])
-              }
-            >
-              <button className="episode__thumb" onClick={onPlay} aria-label={`Play episode ${e.episode}`}>
-                <Img src={e.thumbnail} alt="" className="episode__img" fallback={<span className="episode__noimg">E{e.episode}</span>} />
-                {!upcoming && (
-                  <span className="episode__play" aria-hidden>
-                    <Play size={18} fill="currentColor" strokeWidth={0} />
-                  </span>
-                )}
-                {isWatched && (
-                  <span className="episode__watched" title="Watched">
-                    <CheckCircle2 size={16} />
-                  </span>
-                )}
-                {p && (
-                  <span className="episode__progress">
-                    <ProgressLine value={p.positionS / p.durationS} />
-                  </span>
-                )}
-              </button>
-              <div className="episode__text">
-                <h3 className="episode__title">
-                  <span className="episode__num">{e.episode}.</span> {e.title ?? `Episode ${e.episode}`}
-                </h3>
-                <p className="episode__meta">
-                  {Number.isFinite(released) && <span>{upcoming ? `Airs ${new Date(released).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : new Date(released).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
-                  {v?.runtime && <span>{String(v.runtime).replace(/\D+$/, '')} min</span>}
-                  {p && (
-                    <span>
-                      <Clock size={12} /> {formatTime(p.durationS - p.positionS)} left
-                    </span>
-                  )}
-                </p>
-                {(v?.overview ?? v?.description) && <p className="episode__overview">{v?.overview ?? v?.description}</p>}
-              </div>
-            </article>
-          );
-        })}
+      {/* Keyed by season: another season's rows are new rows, never the old ones rearranged. */}
+      <div className="episodes__grid" key={`s${current}`}>
+        {group.episodes.map(row)}
       </div>
+      {group.extras.length > 0 && (
+        <>
+          <h3 className="episodes__group">
+            Extras <span className="episodes__group-count">{group.extras.length}</span>
+          </h3>
+          <div className="episodes__grid" key={`x${current}`}>
+            {group.extras.map(row)}
+          </div>
+        </>
+      )}
     </section>
   );
 }

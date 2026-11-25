@@ -1,15 +1,17 @@
 // Data for screens, cached with TanStack Query.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query';
 import { canBrowse, catalogAddon, fetchCatalog, fetchMeta } from '../addons/client';
-import { parseId, titleKey } from '../addons/ids';
-import type { Meta, MetaPreview, Video } from '../addons/types';
+import { parseId } from '../addons/ids';
+import type { Meta, MetaPreview } from '../addons/types';
 import { useAddons } from '../addons/store';
 import { bestBackdrop, bestLogo, certification, details, resolveTmdb, trailerKey, type TmdbDetails } from '../meta/tmdb';
 import { BUILT_IN_TMDB_KEY, tmdbKeyId, useKeys } from '../state/keys';
 import { useHistory, type MediaType } from '../state/history';
 import { deriveContinue, type ContinueItem, type EpisodeRef } from '../library/continue';
+import { buildGuide, type EpisodeGuide } from '../library/episodes';
+import { useCardArt, withCard } from '../library/cardArt';
 import { serverAsAddon } from '../servers';
 import { useServers } from '../servers/store';
 
@@ -110,15 +112,23 @@ export function flatItems(pages: { items: MetaPreview[] }[] | undefined): MetaPr
   return out;
 }
 
+const NO_GUIDE = buildGuide(undefined);
+const guides = new WeakMap<Meta, EpisodeGuide>();
+
+/**
+ * A show's episode guide (library/episodes): its seasons with their episodes and extras,
+ * Specials last, and the running order. Worked out once per metadata object.
+ */
+export function episodeGuide(meta: Meta | null | undefined): EpisodeGuide {
+  if (!meta) return NO_GUIDE;
+  let guide = guides.get(meta);
+  if (!guide) guides.set(meta, (guide = buildGuide(meta.videos)));
+  return guide;
+}
+
+/** Every video of a show once, extras and specials included (marked as such): see `episodeGuide`. */
 export function episodesOf(meta: Meta | null | undefined): EpisodeRef[] {
-  return (meta?.videos ?? [])
-    .map((v: Video): EpisodeRef | null => {
-      const season = v.season ?? (v.id ? parseId(v.id).season : undefined);
-      const episode = v.episode ?? v.number ?? (v.id ? parseId(v.id).episode : undefined);
-      if (season === undefined || episode === undefined) return null;
-      return { id: v.id, season, episode, released: v.released, title: v.name ?? v.title, thumbnail: v.thumbnail };
-    })
-    .filter((x): x is EpisodeRef => !!x);
+  return episodeGuide(meta).all;
 }
 
 export interface ContinueCard extends ContinueItem {
@@ -155,11 +165,16 @@ function limiter(max: number) {
 
 const inBackground = limiter(4);
 const NO_EPISODES = new Map<string, EpisodeRef[] | null>();
+const NO_ART: ContinueCard[] = [];
 /** At most this many shows have their next episode worked out, most recently watched first. */
 const NEXT_EPISODE_SHOWS = 60;
 
-/** Continue Watching, with the series metadata it needs fetched (most recent first). */
-export function useContinueWatching(limit = 40): { items: ContinueCard[]; loading: boolean } {
+/**
+ * Continue Watching, with the series metadata it needs fetched (most recent first), and the art
+ * of entries that came without any (a tracker's) filled in. `art: false` for a caller that asks
+ * for the art itself, for the part of the list it shows (the Library grid).
+ */
+export function useContinueWatching(limit = 40, opts: { art?: boolean } = {}): { items: ContinueCard[]; loading: boolean } {
   const progress = useHistory((s) => s.progress);
   const watched = useHistory((s) => s.watched);
   const dismissed = useHistory((s) => s.dismissed);
@@ -203,56 +218,35 @@ export function useContinueWatching(limit = 40): { items: ContinueCard[]; loadin
 
   const result = useMemo(() => deriveContinue({ progress, watched, dismissed, episodes }), [progress, watched, dismissed, episodes]);
 
-  // Remember art from fetched metadata so the row is complete on the next start.
+  // Remember art from fetched metadata so the row is complete on the next start. All of it in
+  // one change: a card per show would re-render every row once per show.
   useEffect(() => {
-    seriesIds.forEach((id, i) => {
+    const found = seriesIds.flatMap((id, i) => {
       const m = metaQueries[i]?.data;
-      if (m) useHistory.getState().rememberCard(id, 'series', { name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo });
+      return m ? [{ metaId: id, type: 'series' as const, card: { name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo } }] : [];
     });
+    if (found.length) useHistory.getState().rememberCards(found);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metaQueries.map((q) => q.dataUpdatedAt).join(',')]);
 
   const items = useMemo(
     () =>
-      result.items.slice(0, limit).map((it) => {
-        const c = cards[titleKey(it.metaId, it.type)];
+      result.items.slice(0, limit).map((it): ContinueCard => {
+        // The remembered card first, then what the resume point came with; only pictures that
+        // can load (library/cardArt).
         const p = progress[it.key];
-        return { ...it, name: c?.name ?? p?.name, poster: c?.poster ?? p?.poster, background: c?.background ?? p?.background, logo: c?.logo ?? p?.logo };
+        return withCard({ ...it, name: p?.name, poster: p?.poster, background: p?.background, logo: p?.logo }, cards, 'card');
       }),
     [result, cards, progress, limit],
   );
+
+  // These are wide cards wherever they are shown: the logo is asked for with the rest.
+  useCardArt(opts.art === false ? NO_ART : items, { logo: true });
 
   const loading = result.needEpisodes.length > 0 && metaQueries.some((q) => q.isLoading);
   return { items, loading };
 }
 
-/**
- * Titles shown without a name or poster: their metadata is fetched and the art remembered in
- * history's cards (so the caller shows it from there). Works through the whole list a few at a
- * time: a title that has been answered, with art or without, makes room for the next.
- */
-export function useCardArt(items: { metaId: string; type: MediaType; name?: string; poster?: string }[]) {
-  const addonsLoaded = useAddons((s) => s.loaded);
-  const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set());
-  const missing = items.filter((i) => (!i.poster || !i.name) && !answered.has(titleKey(i.metaId, i.type))).slice(0, 30);
-  const queries = useQueries({
-    queries: missing.map((i) => ({
-      queryKey: ['meta', i.type, i.metaId, 'art'],
-      queryFn: ({ signal }: { signal: AbortSignal }) => inBackground(signal, () => fetchMeta(i.type, i.metaId, signal)),
-      enabled: addonsLoaded,
-      staleTime: 12 * HOUR,
-    })),
-  });
-  useEffect(() => {
-    const done: string[] = [];
-    missing.forEach((i, idx) => {
-      const q = queries[idx];
-      if (!q || !(q.isSuccess || q.isError)) return;
-      const m = q.data;
-      if (m) useHistory.getState().rememberCard(i.metaId, i.type, { name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo });
-      done.push(titleKey(i.metaId, i.type));
-    });
-    if (done.length) setAnswered((prev) => new Set([...prev, ...done]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queries.map((q) => `${q.dataUpdatedAt}:${q.errorUpdatedAt}`).join(',')]);
-}
+// Titles shown without a name or poster get them from TMDB, then the metadata addons, and keep
+// them in history's cards: see library/cardArt.ts.
+export { useCardArt };

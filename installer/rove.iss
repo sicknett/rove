@@ -41,6 +41,11 @@ LZMANumBlockThreads=4
 ; That update is not a silent install: Setup shows its progress window and nothing else.
 CloseApplications=yes
 RestartApplications=no
+#ifdef Sign
+; Code-signed builds: Setup and the uninstaller are signed by tools\sign.ps1 (passed in as "rovesign").
+SignTool=rovesign
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

@@ -214,3 +214,188 @@ export async function searchTitles(kind: TmdbKind, query: string, year?: number)
   const res = await tmdb<{ results?: TmdbSearchItem[] }>(`/search/${kind}`, params, 24 * 3600 * 1000);
   return res?.results ?? [];
 }
+
+// ---------- Search and Discover ----------
+
+/**
+ * `tmdb`, for a caller that may stop waiting for the answer (a search whose text has moved on).
+ * Giving up does not stop the request itself: it is shared with whoever else asked, and its
+ * answer is still kept, so typing the same thing again is answered at once. The cache key is the
+ * one `tmdb` uses, so the two share answers.
+ */
+export async function tmdbAsk<T>(path: string, params: Record<string, string>, opts: { signal?: AbortSignal; ttlMs?: number } = {}): Promise<T | null> {
+  const key = effectiveTmdbKey()?.trim();
+  if (!key) return null;
+  const { query, headers } = auth(key);
+  const url = `${API}${path}?${new URLSearchParams({ language: 'en-US', ...params, ...query })}`;
+  const cacheParams = new URLSearchParams({ language: 'en-US', ...params });
+  try {
+    return await getJson<T>(url, { ttlMs: opts.ttlMs ?? 12 * 3600 * 1000, cacheKey: `tmdb:${path}?${cacheParams}`, headers, timeoutMs: 15000, signal: opts.signal });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** One page of a TMDB list, with how much there is in all. */
+export interface TmdbPage<T> {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: T[];
+}
+
+interface RawPage<T> {
+  page?: number;
+  total_pages?: number;
+  total_results?: number;
+  results?: T[];
+}
+
+const asPage = <T>(r: RawPage<T> | null, page: number): TmdbPage<T> => ({ page: r?.page ?? page, totalPages: r?.total_pages ?? 0, totalResults: r?.total_results ?? 0, results: r?.results ?? [] });
+
+/** A title as search, trending and discover send it: a list item with what ranking needs. */
+export interface TmdbTitleHit extends TmdbSearchItem {
+  popularity?: number;
+  vote_count?: number;
+  genre_ids?: number[];
+  original_language?: string;
+  adult?: boolean;
+}
+
+/** A person as search and trending send them. `known_for` is up to three of their titles. */
+export interface TmdbPersonHit {
+  id: number;
+  name: string;
+  profile_path?: string | null;
+  known_for_department?: string;
+  popularity?: number;
+  adult?: boolean;
+  known_for?: TmdbTitleHit[];
+}
+
+const SEARCH_TTL = 30 * 60 * 1000;
+
+/**
+ * One page of titles matching a name, in TMDB's own order, with the page count. `year` keeps a
+ * movie search to films released that year and a show search to shows that first aired in it.
+ * An empty page without a TMDB key.
+ */
+export async function searchTitlePage(kind: TmdbKind, query: string, page = 1, opts: { year?: number; signal?: AbortSignal } = {}): Promise<TmdbPage<TmdbTitleHit>> {
+  const params: Record<string, string> = { query, include_adult: 'false', page: String(page) };
+  if (opts.year) params[kind === 'movie' ? 'primary_release_year' : 'first_air_date_year'] = String(opts.year);
+  return asPage(await tmdbAsk<RawPage<TmdbTitleHit>>(`/search/${kind}`, params, { signal: opts.signal, ttlMs: SEARCH_TTL }), page);
+}
+
+/** One page of people matching a name, best known first. */
+export async function searchPeoplePage(query: string, page = 1, signal?: AbortSignal): Promise<TmdbPage<TmdbPersonHit>> {
+  return asPage(await tmdbAsk<RawPage<TmdbPersonHit>>('/search/person', { query, include_adult: 'false', page: String(page) }, { signal, ttlMs: SEARCH_TTL }), page);
+}
+
+/**
+ * Movies and shows trending this week, most talked about first. Asked for exactly as the Home rows
+ * made from history ask (recs/sources.ts), so whichever screen comes first pays for both.
+ */
+export async function trendingTitles(signal?: AbortSignal): Promise<TmdbTitleHit[]> {
+  const r = await tmdbAsk<RawPage<TmdbTitleHit>>('/trending/all/week', { page: '1' }, { signal, ttlMs: 6 * 3600 * 1000 });
+  return (r?.results ?? []).filter((x) => x.media_type === 'movie' || x.media_type === 'tv');
+}
+
+/** People trending this week. */
+export async function trendingPeople(signal?: AbortSignal): Promise<TmdbPersonHit[]> {
+  const r = await tmdbAsk<RawPage<TmdbPersonHit>>('/trending/person/week', {}, { signal, ttlMs: 12 * 3600 * 1000 });
+  return r?.results ?? [];
+}
+
+/**
+ * One page of /discover, with the totals. `params` are TMDB's own names and carry the page
+ * (meta/tmdbSources.ts `discoverRequest` writes them for a saved filter set).
+ */
+export async function discoverPage(kind: TmdbKind, params: Record<string, string>, signal?: AbortSignal): Promise<TmdbPage<TmdbTitleHit>> {
+  return asPage(await tmdbAsk<RawPage<TmdbTitleHit>>(`/discover/${kind}`, params, { signal }), Number(params.page) || 1);
+}
+
+/** A service titles can be watched on, as TMDB (from JustWatch) lists it for a country. */
+export interface TmdbProvider {
+  provider_id: number;
+  provider_name: string;
+  logo_path?: string | null;
+  display_priority?: number;
+  /** Country code -> where the service ranks there (lower is bigger). */
+  display_priorities?: Record<string, number>;
+}
+
+/** The services that carry movies (or shows) in a country, the biggest there first. */
+export async function watchProviders(kind: TmdbKind, region: string, signal?: AbortSignal): Promise<TmdbProvider[]> {
+  const r = await tmdbAsk<{ results?: TmdbProvider[] }>(`/watch/providers/${kind}`, { watch_region: region }, { signal, ttlMs: 24 * 3600 * 1000 });
+  const rank = (p: TmdbProvider) => p.display_priorities?.[region] ?? p.display_priority ?? 9999;
+  return [...(r?.results ?? [])].sort((a, b) => rank(a) - rank(b));
+}
+
+/** The countries TMDB has watch providers for. */
+export async function watchRegions(signal?: AbortSignal): Promise<{ iso_3166_1: string; english_name: string }[]> {
+  const r = await tmdbAsk<{ results?: { iso_3166_1: string; english_name: string }[] }>('/watch/providers/regions', {}, { signal, ttlMs: 7 * 24 * 3600 * 1000 });
+  return r?.results ?? [];
+}
+
+// ---------- Card art ----------
+
+/** What a card needs of a title: its name and pictures, as full image links. */
+export interface TmdbArt {
+  id: number;
+  kind: TmdbKind;
+  name?: string;
+  poster?: string;
+  background?: string;
+  logo?: string;
+  year?: string;
+}
+
+interface ArtFields {
+  id: number;
+  title?: string;
+  name?: string;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  release_date?: string;
+  first_air_date?: string;
+  images?: { logos?: TmdbImage[] };
+}
+
+const ART_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function asArt(kind: TmdbKind, d: ArtFields): TmdbArt {
+  return {
+    id: d.id,
+    kind,
+    name: (kind === 'movie' ? d.title ?? d.name : d.name ?? d.title) || undefined,
+    poster: tmdbImage(d.poster_path, 'w342'),
+    background: tmdbImage(d.backdrop_path, 'w1280'),
+    logo: bestLogo(d.images?.logos),
+    year: (kind === 'movie' ? d.release_date : d.first_air_date)?.slice(0, 4) || undefined,
+  };
+}
+
+/**
+ * A title's name, poster and backdrop by its TMDB number: one small request, nothing appended.
+ * `logo` asks for its logo art as well (still one request, a larger answer). Null when TMDB has
+ * no such title or there is no key; throws when TMDB could not be asked (see `tmdb`).
+ */
+export async function titleArt(kind: TmdbKind, id: number, opts: { logo?: boolean } = {}): Promise<TmdbArt | null> {
+  const d = await tmdb<ArtFields>(`/${kind}/${id}`, opts.logo ? { append_to_response: 'images', include_image_language: 'en,null' } : {}, ART_TTL_MS);
+  return d ? asArt(kind, { ...d, id: d.id ?? id }) : null;
+}
+
+/**
+ * The same for an IMDb id, read from the /find answer itself: the request `findByImdb` makes (and
+ * shares the cached answer of) already carries the name and pictures. `prefer` picks between a
+ * movie and a show when the id matches both. No logo: /find does not list them.
+ */
+export async function titleArtByImdb(imdbId: string, prefer: TmdbKind): Promise<TmdbArt | null> {
+  const res = await tmdb<{ movie_results?: ArtFields[]; tv_results?: ArtFields[] }>(`/find/${imdbId}`, { external_source: 'imdb_id' }, ART_TTL_MS);
+  const movie = res?.movie_results?.[0];
+  const tv = res?.tv_results?.[0];
+  const kind: TmdbKind | null = prefer === 'movie' ? (movie ? 'movie' : tv ? 'tv' : null) : tv ? 'tv' : movie ? 'movie' : null;
+  if (!kind) return null;
+  return asArt(kind, (kind === 'movie' ? movie : tv)!);
+}

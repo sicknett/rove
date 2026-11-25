@@ -11,7 +11,10 @@ export function ProfilesSection() {
   const [editing, setEditing] = useState<Profile | 'new' | null>(null);
   return (
     <>
-      <Group title="Profiles" note="Each profile has its own Home layout, history, PublicMetaDB account and player preferences. Addons are shared.">
+      <Group
+        id="profiles.list"
+        note="Each profile has its own Home layout, watch history, tracker sign-in, collections, and playback, subtitle, audio and appearance settings. Addons, media servers, the AI assistant and the TMDB key are shared by all of them."
+      >
         {profiles.map((p) => (
           <div key={p.id} className="profile-row">
             <Avatar profile={p} size={40} />
@@ -19,24 +22,23 @@ export function ProfilesSection() {
               <span className="profile-row__name">
                 {p.name} {p.id === activeId && <span className="tag">This profile</span>}
               </span>
-              <span className="profile-row__sub">{[p.kids ? 'Kids' : null, p.pin ? 'PIN set' : null].filter(Boolean).join(' · ') || 'No PIN'}</span>
+              <span className="profile-row__sub">{[p.kids ? 'Kids profile' : null, p.pin ? 'Locked with a PIN' : 'No PIN'].filter(Boolean).join(' · ')}</span>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(p)}>
+            <Button variant="ghost" size="sm" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
               Edit
             </Button>
           </div>
         ))}
-        {profiles.length < MAX_PROFILES && (
-          <div className="s-row s-row--actions">
-            <Button variant="secondary" icon={<Plus size={16} />} onClick={() => setEditing('new')}>
-              Add a profile
-            </Button>
-          </div>
-        )}
+        <div className="s-row s-row--actions">
+          {profiles.length >= MAX_PROFILES && <span className="s-row__hint">{MAX_PROFILES} profiles is the most ROVE keeps. Delete one to add another.</span>}
+          <Button variant="secondary" icon={<Plus size={16} />} disabled={profiles.length >= MAX_PROFILES} onClick={() => setEditing('new')}>
+            Add a profile
+          </Button>
+        </div>
       </Group>
       <Group title="Starting ROVE">
-        <SettingRow label="Open the last profile" hint="Skips the profile picker unless that profile has a PIN">
-          <Switch checked={autoOpenLast} onChange={setAutoOpenLast} label="Open the last profile" />
+        <SettingRow id="profiles.autoOpenLast">
+          <Switch checked={autoOpenLast} onChange={setAutoOpenLast} label="Open the last profile when ROVE starts" />
         </SettingRow>
       </Group>
       {editing && <ProfileEditor profile={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}

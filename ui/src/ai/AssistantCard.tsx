@@ -86,6 +86,7 @@ export function AssistantCard() {
 
   return (
     <Group
+      id="accounts.assistant"
       title="AI assistant"
       note="Nothing is sent to an AI provider unless one is connected here. Once one is, Ask in Search sends the request you type, and the For you row on Home sends the names and years of titles from the open profile’s history and watchlist (once a day at most, or when you pick Refresh). They go to the provider you chose and nowhere else. The key is stored encrypted for your Windows account and serves every profile."
     >

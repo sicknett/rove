@@ -1,7 +1,8 @@
 # Builds ROVE for release and lays it out as a portable app in dist\ROVE:
 #   rove.exe, libmpv-2.dll, web\ (the page). Then adds Start menu and Desktop shortcuts.
 # The app must not be running (its files are replaced). -NoShortcuts skips the shortcuts.
-param([switch]$NoShortcuts)
+# -SelfUpdate builds in installing updates from inside the app (for code-signed builds only).
+param([switch]$NoShortcuts, [switch]$SelfUpdate)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $out = Join-Path $root 'dist\ROVE'
@@ -12,7 +13,10 @@ if (Get-Process rove -ErrorAction SilentlyContinue | Where-Object { $_.Path -and
 Push-Location (Join-Path $root 'ui')
 try { npm run build | Out-Host; if ($LASTEXITCODE) { throw 'page build failed' } } finally { Pop-Location }
 Push-Location (Join-Path $root 'shell')
-try { cargo build --release | Out-Host; if ($LASTEXITCODE) { throw 'shell build failed' } } finally { Pop-Location }
+try {
+    if ($SelfUpdate) { cargo build --release --features self-update | Out-Host } else { cargo build --release | Out-Host }
+    if ($LASTEXITCODE) { throw 'shell build failed' }
+} finally { Pop-Location }
 
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory -Force $out | Out-Null

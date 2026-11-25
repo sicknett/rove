@@ -326,6 +326,10 @@ export function useNextEpisode(session: Session | null): EpisodeRef | null {
   return useMemo(() => {
     // Specials sit outside the running order: nothing follows one.
     if (type !== 'series' || !meta || season === undefined || season === 0) return null;
-    return nextEpisode(episodesOf(meta), { season, episode: episode ?? 0 }, new Set(), Date.now());
+    const all = episodesOf(meta);
+    // Nor does anything follow an extra the data files in a season (library/episodes), and no
+    // extra ever comes next: after the last episode of a season it is the next season's first.
+    if (all.some((e) => e.extra && e.season === season && e.episode === episode)) return null;
+    return nextEpisode(all, { season, episode: episode ?? 0 }, new Set(), Date.now());
   }, [meta, type, season, episode]);
 }

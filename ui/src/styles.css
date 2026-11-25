@@ -346,9 +346,16 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 /* Rows and cards off screen are skipped entirely until they come near (big win on long Homes). */
 .row { position: relative; margin-top: 30px; content-visibility: auto; contain-intrinsic-size: auto 340px; }
 .row--continue { content-visibility: visible; }
-.row__scroller > .card { content-visibility: auto; contain-intrinsic-size: var(--card-w) calc(var(--card-w) * 1.5 + 52px); }
+.row__scroller > .card { content-visibility: auto; contain-intrinsic-size: var(--card-w) calc(var(--card-w) * 1.5 + 52px); z-index: 0; transition: content-visibility 0s 300ms allow-discrete, z-index 0s 300ms; }
 .row__scroller > .card--wide { contain-intrinsic-size: calc(var(--card-w) * 1.9) calc(var(--card-w) * 1.07 + 52px); }
-.row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 0 var(--gutter) 12px calc(var(--sidebar-w) + var(--gutter) - 12px); }
+/* A skipped card is also clipped to its own box, which cut the top and the glow off a card as it
+   lifted. The one card under the pointer (or holding focus) is let out of that and drawn above
+   its neighbours, so the glow falls on both sides alike; it goes back in once it has settled
+   (the delay above, a little longer than the lift takes). */
+.row__scroller > .card:hover, .row__scroller > .card:focus-within { content-visibility: visible; z-index: 2; transition-delay: 0s; }
+/* The gap between a row's title and its cards belongs to the scroller (its top padding): a row
+   that scrolls sideways clips at its top edge too, and the lift and its ring need that room. */
+.row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 0 var(--gutter) 0 calc(var(--sidebar-w) + var(--gutter) - 12px); }
 .row__title { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.012em; }
 .row__count { font-size: 14px; font-weight: 500; color: var(--ink-3); margin-left: 6px; }
 .row__more { font-size: 13px; font-weight: 600; color: var(--ink-3); padding: 4px 8px; border-radius: 8px; transition: color 140ms, background-color 140ms; }
@@ -417,36 +424,104 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .device-code { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .device-code__value { font-size: 26px; font-weight: 700; letter-spacing: 0.18em; font-variant-numeric: tabular-nums; padding: 6px 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.08); color: var(--ink); user-select: all; }
 .row__viewport { position: relative; }
-.row__scroller { display: flex; gap: 18px; overflow-x: auto; overflow-y: visible; padding: 8px var(--gutter) 14px calc(var(--sidebar-w) + var(--gutter) - 12px); scroll-padding-left: calc(var(--sidebar-w) + var(--gutter) - 12px); scroll-snap-type: x proximity; scrollbar-width: none; }
+.row__scroller { display: flex; gap: 18px; overflow-x: auto; overflow-y: visible; padding: 20px var(--gutter) 14px calc(var(--sidebar-w) + var(--gutter) - 12px); scroll-padding-left: calc(var(--sidebar-w) + var(--gutter) - 12px); scroll-snap-type: x proximity; scrollbar-width: none; }
 .row__scroller::-webkit-scrollbar { display: none; }
 .row__scroller > .card { scroll-snap-align: start; }
-.row__arrow { position: absolute; top: 8px; bottom: 60px; z-index: 5; width: 56px; display: grid; place-items: center; color: var(--ink); opacity: 0; transition: opacity 200ms; }
+/* Round buttons at the row's ends, level with the middle of the art (the row's padding above,
+   the caption below). Solid, not a strip of shade: nothing of the poster under them is dimmed. */
+.row__arrow { position: absolute; top: 20px; bottom: 60px; margin-block: auto; z-index: 5; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; color: var(--ink); background: rgba(22, 24, 26, 0.94); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1); opacity: 0; transition: opacity 200ms, background-color 160ms, transform 160ms var(--ease-out); }
 .row__viewport:hover .row__arrow { opacity: 1; }
-.row__arrow--prev { left: var(--sidebar-w); background: linear-gradient(to right, rgba(11, 12, 13, 0.85), rgba(11, 12, 13, 0)); }
-.row__arrow--next { right: 0; background: linear-gradient(to left, rgba(11, 12, 13, 0.85), rgba(11, 12, 13, 0)); }
-.row__arrow:hover svg { transform: scale(1.15); }
-.row__arrow svg { transition: transform 160ms var(--ease-out); }
+.row__arrow:hover { background: rgba(40, 43, 46, 0.98); transform: scale(1.08); }
+.row__arrow:active { transform: scale(0.96); }
+.row__arrow:focus-visible { opacity: 1; outline: none; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 1.5px var(--ink); }
+.row__arrow--prev { left: calc(var(--sidebar-w) + 10px); }
+.row__arrow--next { right: 10px; }
+/* Dragging a row with the mouse (media/dragScroll.ts): it follows the pointer, so it does not
+   snap meanwhile, and the cards passing under the pointer do not light up or open. */
+.row__scroller { user-select: none; }
+.row__scroller img { -webkit-user-drag: none; }
+.row__scroller.is-dragging { scroll-snap-type: none; cursor: grabbing; }
+.row__scroller.is-dragging > * { pointer-events: none; }
+.row__viewport:has(.is-dragging) .row__arrow { opacity: 0; pointer-events: none; }
 .row__more-spinner { flex: none; width: 60px; display: grid; place-items: center; }
 /* In place of cards: a row, or its next page, that did not load. */
 .row__note { flex: none; align-self: center; display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
 /* In a row's header: what the row is doing right now (For you fetching new picks). */
 .row__status { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 13px; font-weight: 600; color: var(--ink-3); }
-/* Top 10 rows (screens/home/SmartRows): each poster stands beside its place in the chart, a tall
-   outlined numeral that the poster overlaps. The numeral is as tall as the poster and sized from
-   the card width, so it follows the card size setting. Outlined, not filled: Home's background
-   takes its colour from the banner, and an outline reads on any of them. */
-.rank { position: relative; flex: none; display: flex; align-items: flex-start; scroll-snap-align: start; }
-.rank__num { flex: none; display: flex; align-items: flex-end; height: calc(var(--card-w) * 1.5); margin-right: calc(var(--card-w) * -0.2); font-size: calc(var(--card-w) * 1.14); font-weight: 800; line-height: 0.76; letter-spacing: -0.05em; font-feature-settings: 'lnum', 'tnum' 0; color: transparent; -webkit-text-stroke: 2.5px var(--ink-3); user-select: none; pointer-events: none; transition: color 220ms var(--ease-out), -webkit-text-stroke-color 220ms var(--ease-out); }
-/* "10" is two digits in the room of one: drawn closer together and a little narrower. */
-.rank__num--wide { letter-spacing: -0.12em; transform: scaleX(0.84); transform-origin: right bottom; margin-left: calc(var(--card-w) * -0.16); }
-.rank > .card { z-index: 1; }
-.rank:hover .rank__num, .rank:focus-within .rank__num { color: var(--accent-soft); -webkit-text-stroke-color: var(--accent-strong); }
-.row--top10 .row__scroller { gap: 10px; }
+/* Top 10 rows (screens/home/SmartRows): each poster stands beside its place in the chart, set in
+   a narrow column of its own: two figures at the poster's foot, "01" to "10" (the nought dimmed),
+   under a hairline that rises to the poster's top. Every place is as wide as the next, so "10"
+   sits as easily as "1" and the row keeps one rhythm; nothing is hidden behind the poster and
+   nothing lies over it, so the card lifts, and opens into its preview, beside its number. Sized
+   from the card width, so it follows the card size setting; a place is nearer its own poster
+   than the one before it. */
+.rank { position: relative; flex: none; display: flex; align-items: flex-start; gap: calc(var(--card-w) * 0.07); scroll-snap-align: start; }
+.rank__num { position: relative; order: -1; flex: none; display: flex; align-items: flex-end; height: calc(var(--card-w) * 1.5); font-size: calc(var(--card-w) * 0.3); font-weight: 750; line-height: 0.74; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; color: var(--ink); user-select: none; pointer-events: none; transition: color 220ms var(--ease-out), transform 260ms var(--ease-out); }
+.rank__num::before { content: ''; position: absolute; left: 0.07em; top: 0; bottom: 1.06em; width: 1px; background: linear-gradient(to bottom, transparent, currentColor 70%); opacity: 0.24; transition: opacity 220ms var(--ease-out); }
+.rank__zero { opacity: 0.3; }
+.rank > .card { z-index: 0; transition: z-index 0s 300ms; }
+/* The place answers to its card, not to the pointer on the number itself (which does nothing):
+   it comes after the card in the markup and is drawn before it (`order`), so the card's own
+   state reaches it. With the card under the pointer, or reached with the keyboard (not merely
+   holding focus after a click), it takes the accent and its hairline comes up; the card is drawn
+   above its neighbours while it is lifted, as in any row. */
+.rank > .card:hover + .rank__num, .rank > .card:has(:focus-visible) + .rank__num { color: var(--accent-strong); }
+.rank > .card:hover + .rank__num::before, .rank > .card:has(:focus-visible) + .rank__num::before { opacity: 0.6; }
+.rank > .card:hover, .rank > .card:focus-within { z-index: 2; transition-delay: 0s; }
+/* An open preview stays lifted: its place rises with it, to stay level with the picture's foot. */
+.rank > .card.is-expanded + .rank__num { transform: translateY(-4px); }
+.row--top10 .row__scroller { gap: calc(var(--card-w) * 0.15); }
+/* A poster in a row opens into a preview when the pointer rests on it (media/CardPreview): the
+   card itself widens to a 16:9 picture of the same height, and the row's own layout moves its
+   neighbours aside. `card--preview` is on that one card from opening until it is a poster again,
+   `is-expanded` while it is open. A card at rest matches none of this, so it costs it nothing;
+   the durations are EXPAND_MS in media/preview.ts. */
+.row__scroller .card--preview { content-visibility: visible; z-index: 2; transition: width 340ms var(--ease-out); }
+.row__scroller .card.is-expanded { width: calc(var(--card-w) * 8 / 3); }
+/* The frame keeps a poster's height at any width, and the poster its place at the left of it. */
+.card--preview .card__frame { aspect-ratio: auto; height: calc(var(--card-w) * 1.5); }
+.card--preview .card__img { width: var(--card-w); }
+.card--preview .card__rating, .card--preview .card__shine { opacity: 0; }
+/* Open, it stays lifted wherever on it the pointer is (its buttons are beside the frame, not in it). */
+.card.is-expanded .card__frame { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), 0 0 0 1.5px rgba(255, 255, 255, 0.22); }
+/* The preview lies over the frame and moves with it. Only its buttons take the pointer: a click
+   or a right-click anywhere else on the picture is the card's own. */
+.preview { position: absolute; top: 0; left: 0; right: 0; height: calc(var(--card-w) * 1.5); border-radius: var(--radius); overflow: hidden; pointer-events: none; transform: translateY(-4px); animation: fade 220ms var(--ease-out) backwards; transition: opacity 300ms var(--ease-in-out), transform 260ms var(--ease-out); }
+/* Closing, the picture goes as the card narrows, not ahead of it (an empty frame would show).
+   (`backwards`, not `both`: once it has faded in, its own opacity applies again and can fade out.) */
+.preview.is-closing { opacity: 0; transform: none; }
+.preview button { pointer-events: auto; }
+/* The backdrop and the trailer are the size of the open card from the start and centred on it,
+   so neither is resized frame by frame while the card widens: the card opens onto them. The
+   trailer is a little larger than the picture so the player's own edges fall outside it, as in
+   the banner. */
+.preview__art { position: absolute; top: 0; left: 50%; width: calc(var(--card-w) * 8 / 3); height: 100%; margin-left: calc(var(--card-w) * -4 / 3); object-fit: cover; object-position: center 22%; transition-duration: 240ms; }
+.preview__trailer { position: absolute; top: 50%; left: 50%; width: calc(var(--card-w) * 8 / 3 * 1.3); height: calc(var(--card-w) * 1.5 * 1.3); transform: translate(-50%, -50%); border: 0; pointer-events: none; opacity: 0; transition: opacity 700ms var(--ease-out); }
+.preview__trailer.is-visible { opacity: 1; }
+.preview__shade { position: absolute; inset: 0; background: linear-gradient(to top, rgba(8, 9, 10, 0.94) 0%, rgba(8, 9, 10, 0.6) 30%, rgba(8, 9, 10, 0) 64%), linear-gradient(to right, rgba(8, 9, 10, 0.42), rgba(8, 9, 10, 0) 56%); }
+.preview__body { position: absolute; left: 14px; right: 14px; bottom: 12px; display: grid; gap: 10px; justify-items: start; }
+.preview__text { display: grid; gap: 6px; justify-items: start; min-width: 0; max-width: 100%; animation: rise 320ms var(--ease-out) both; }
+.preview__logo { max-width: calc(var(--card-w) * 1.2); max-height: calc(var(--card-w) * 0.32); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.6)); }
+.preview__name { max-width: 100%; font-size: 18px; font-weight: 700; letter-spacing: -0.012em; line-height: 1.2; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview__facts { display: flex; align-items: center; gap: 10px; max-width: 100%; font-size: 12.5px; font-weight: 550; color: var(--ink-2); white-space: nowrap; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); }
+.preview__cert { padding: 0 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--ink-4); font-size: 11px; font-weight: 650; line-height: 17px; letter-spacing: 0.02em; }
+.preview__genres { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.preview__actions { display: flex; align-items: center; gap: 8px; }
+/* The trailer hands this over next to its frame, under the shade in the markup: lifted above it. */
+.preview__sound { position: absolute; z-index: 1; right: 14px; bottom: 12px; animation: fade 300ms var(--ease-out) both; }
+/* While a card of the row is open, or closing, the row does not snap: it has been scrolled just
+   far enough to show the card whole, and snapping would pull it off that. While one is open the
+   arrows step back as well, since the card may reach under them. */
+.row__viewport.is-previewing .row__scroller { scroll-snap-type: none; }
+.row__viewport.is-preview-open .row__arrow { opacity: 0; pointer-events: none; }
 /* Under a grid or a list of results: the part that did not load. */
 .load-more { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 22px 0 0; font-size: 13px; color: var(--ink-3); }
-.screen-pad .row__head, .screen-pad .row__scroller { padding-left: 0; padding-right: 0; scroll-padding-left: 0; }
-.screen-pad .row__arrow--prev { left: -12px; }
-.screen-pad .row__arrow--next { right: -12px; }
+/* On a padded page a row starts at the page's own edge. It still reaches 16px past it on both
+   sides (and pads that back), so the first and last cards have room to lift there as well. */
+.screen-pad .row { margin-left: -16px; margin-right: -16px; }
+.screen-pad .row__head, .screen-pad .row__scroller { padding-left: 16px; padding-right: 16px; scroll-padding-left: 16px; }
+.screen-pad .row__arrow--prev { left: 2px; }
+.screen-pad .row__arrow--next { right: 2px; }
 
 /* ============ Grids ============ */
 .grid { position: relative; width: 100%; }
@@ -536,6 +611,9 @@ kbd { font: 600 12px/1 inherit; padding: 4px 7px; border-radius: 6px; background
 .episodes__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .episodes__seasons { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
 .episodes__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 22px 22px; }
+/* A season's extras (library/episodes): their own group, after its episodes. */
+.episodes__group { display: flex; align-items: baseline; gap: 10px; margin: 34px 0 16px; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+.episodes__group-count { font-size: 13px; font-weight: 550; color: var(--ink-3); }
 .episode { display: grid; grid-template-rows: auto 1fr; gap: 12px; content-visibility: auto; contain-intrinsic-size: auto 330px; }
 .episode__thumb { position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: var(--surface); transition: transform 240ms var(--ease-out), box-shadow 240ms; }
 .episode__thumb:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45), 0 0 0 1.5px rgba(255, 255, 255, 0.2); }
@@ -590,6 +668,76 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .ask-note { margin: 24px 0 0; font-size: 13px; color: var(--ink-3); }
 /* A recent ask is a sentence: the chip shows its start, the tooltip all of it. */
 .chip__text { overflow: hidden; text-overflow: ellipsis; max-width: 46ch; }
+
+/* Search and Discover (screens/search, screens/discover, screens/shared). Flat throughout: plain
+   fills and gradients, no blur and no masks, and nothing that costs per card. */
+.search .search-field { margin-bottom: 24px; }
+.search-field__key { flex: none; color: var(--ink-3); background: rgba(255, 255, 255, 0.06); box-shadow: none; }
+.search-field:focus-within .search-field__key { display: none; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 32px; margin-bottom: 12px; }
+.section-head .eyebrow { margin: 0; }
+.search-block { margin-top: 38px; }
+.search-block .section-head { margin-bottom: 16px; }
+.search-tabs { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+/* A row brings its own space above. Straight under the box, the tabs or the recent searches that would be twice the gap. */
+.search-field + .row, .search-tabs + .row, .search-tabs + div > .row:first-child, .recent-searches + .row, .s-empty + .row { margin-top: 0; }
+/* A recent search is two buttons in one chip: the text searches again, the × forgets it. */
+.chip--split { padding: 0; gap: 0; }
+.chip--split .chip__main { display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 2px 0 15px; border-radius: 999px 0 0 999px; }
+.chip--split .chip__x { width: 24px; height: 24px; margin: 0 5px 0 2px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-3); }
+.chip--split .chip__x:hover { background: rgba(255, 255, 255, 0.16); color: var(--ink); }
+.people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 28px 14px; justify-items: center; }
+.empty__buttons { display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.page-sub--note { margin: 6px 0 0; }
+/* The featured title (shared/Featured): Search's best match, Discover's surprise pick. The picture
+   keeps its own shape at the right edge and the surface colour runs into it from the left, so
+   the text always sits on a flat, dark ground whatever the window's width. */
+.feature, .feature-skeleton { --feature-h: clamp(300px, 42vh, 430px); --feature-w: calc(var(--feature-h) * 16 / 9); height: var(--feature-h); border-radius: var(--radius-lg); }
+.feature { position: relative; overflow: hidden; background: var(--surface); animation: rise 360ms var(--ease-out) both; }
+.feature__img { position: absolute; top: 0; right: 0; width: var(--feature-w); height: 100%; object-fit: cover; object-position: center 20%; }
+.feature--poster { --feature-w: calc(var(--feature-h) * 2 / 3); }
+/* Measured from the right edge in the picture's own width: solid a little before the picture's left edge, so no seam shows there. */
+.feature__shade { position: absolute; inset: 0; background: linear-gradient(to left, rgba(21, 24, 26, 0) calc(var(--feature-w) * 0.3), rgba(21, 24, 26, 0.74) calc(var(--feature-w) * 0.7), var(--surface) calc(var(--feature-w) - 3px)), linear-gradient(to top, rgba(21, 24, 26, 0.55), rgba(21, 24, 26, 0) 42%); }
+.feature__body { position: absolute; left: clamp(22px, 2.6vw, 40px); bottom: clamp(22px, 2.6vw, 36px); width: min(580px, 64%); }
+.feature__label { margin: 0 0 8px; color: var(--accent-strong); }
+.feature__title { margin: 0 0 12px; font-size: clamp(26px, 2.6vw, 38px); font-weight: 750; letter-spacing: -0.025em; line-height: 1.08; }
+.feature__overview { margin: 12px 0 0; max-width: 60ch; font-size: 14px; line-height: 1.55; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.feature__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+.feature--person { height: auto; display: flex; align-items: center; gap: 28px; padding: 24px 28px; }
+.feature--person .feature__body { position: static; width: auto; }
+.feature__face { width: 132px; height: 132px; border-radius: 50%; object-fit: cover; background: var(--surface-2); flex: none; }
+.feature__face--mono { display: grid; place-items: center; font-size: 44px; font-weight: 700; color: var(--ink-4); }
+.discover .feature { margin-bottom: 30px; }
+/* Tiles: a genre on Search (told apart by its hue), a starting point on Discover. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
+.tiles--row { display: flex; overflow-x: auto; scrollbar-width: none; padding: 2px; margin: -2px; }
+.tile { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 10px 16px; border-radius: var(--radius); background: rgba(255, 255, 255, 0.055); text-align: left; transition: background-color 140ms, box-shadow 140ms; }
+.tiles--row .tile { flex: none; min-width: 212px; }
+.tile:hover { background: rgba(255, 255, 255, 0.1); }
+.tile.is-on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.tile__icon { flex: none; display: grid; place-items: center; color: var(--accent-strong); }
+.tile__text { display: grid; gap: 1px; min-width: 0; }
+.tile__name { font-size: 14px; font-weight: 620; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile__blurb { font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile--tint { background: linear-gradient(120deg, hsl(var(--tile-h) 30% 23%), hsl(var(--tile-h) 26% 15%)); }
+.tile--tint:hover { background: linear-gradient(120deg, hsl(var(--tile-h) 34% 28%), hsl(var(--tile-h) 28% 18%)); }
+.tile--tint .tile__icon { color: hsl(var(--tile-h) 55% 78%); }
+/* Discover's filters: one line of controls, then the filters in force as chips to take away. */
+.filterbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.select--compact { min-width: 0; }
+.select.is-set { background: var(--accent-soft); color: var(--accent-strong); }
+.select.is-set:hover, .select.is-set[aria-expanded='true'] { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.select__count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-size: 11.5px; font-weight: 700; }
+.filterline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 28px; margin-bottom: 24px; }
+.filterline__count { margin-right: 6px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.starts { margin-bottom: 28px; }
+.popover--multi { width: 290px; }
+.popover__head { padding: 4px 4px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.popover__field { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-left: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
+.popover__logo { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+.popover__note { margin: 0; padding: 10px; font-size: 13px; color: var(--ink-3); }
+/* Arrow keys move the keyboard from card to card: the one that takes it comes clear of the title bar. */
+.search .card__frame, .search .person, .search .tile, .discover .card__frame { scroll-margin: calc(var(--titlebar-h) + 64px) 0 48px; }
 
 .person-head { display: flex; gap: 32px; align-items: flex-start; margin-bottom: 36px; }
 .person-head__img, .person-head__mono { width: 180px; aspect-ratio: 2 / 3; border-radius: var(--radius-lg); object-fit: cover; background: var(--surface); flex: none; }
@@ -678,11 +826,112 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .sub-preview__text--shadow { -webkit-text-stroke: var(--sub-outline-w) var(--sub-outline); paint-order: stroke fill; text-shadow: 1px 2px 3px rgba(0, 0, 0, 0.6); }
 .sub-preview__text--box { background: rgba(0, 0, 0, 0.7); border-radius: 4px; }
 .sub-preview__text.is-bold { font-weight: 750; }
+/* The subtitle font choices: each tile shows its own face. */
+.font-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.font-tile { display: grid; justify-items: center; gap: 4px; min-width: 92px; padding: 10px 12px 9px; border-radius: 12px; background: var(--surface); color: var(--ink-2); transition: background-color 140ms, color 140ms, box-shadow 140ms; }
+.font-tile:hover { background: var(--surface-2); color: var(--ink); }
+.font-tile.is-on { color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--accent-strong); background: var(--accent-soft); }
+.font-tile:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.font-tile__sample { font-size: 24px; line-height: 1.1; color: var(--ink); }
+.font-tile__name { font-size: 12px; font-weight: 600; }
 .about { display: flex; align-items: center; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--line); }
 .about__mark { width: 56px; }
 .about__name { margin: 0; font-size: 22px; font-weight: 750; letter-spacing: 0.18em; }
 .about__version { margin: 2px 0 0; color: var(--ink-3); }
 .about__notes { margin: 0 0 14px; padding: 0 2px; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); white-space: pre-line; }
+/* Settings, continued: grouped sections with a search box, what is in effect under each heading,
+   rows that say why they are disabled, the Advanced disclosure and the search results. The list's
+   width follows the navigation: beside a left sidebar it makes room for it, under a top bar it does not. */
+.settings { grid-template-columns: calc(var(--sidebar-w) + 246px) minmax(0, 1fr); }
+.settings__title { margin-bottom: 16px; }
+.settings__search { position: relative; display: flex; align-items: center; flex: none; height: 38px; margin-bottom: 16px; padding: 0 6px 0 36px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow 150ms, background-color 150ms; }
+.settings__search:focus-within { background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
+.settings__search-icon { position: absolute; left: 12px; color: var(--ink-3); pointer-events: none; }
+.settings__search-input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; font-size: 13.5px; }
+.settings__search-input:focus-visible { outline: none; }
+.settings__search-input::placeholder { color: var(--ink-3); }
+.settings__search-clear { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--ink-3); }
+.settings__search-clear:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
+.settings__group { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.settings__group + .settings__group { margin-top: 16px; }
+.settings__group-label { padding: 0 12px 5px; font-size: 11px; font-weight: 650; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+.settings__link { flex: none; }
+.settings__link-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.settings__body { animation: none; }
+.settings__page { animation: rise 300ms var(--ease-out) both; }
+.settings__head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; min-height: 36px; margin: 4px 0 26px; }
+.settings__head-text { flex: 1 1 300px; min-width: 0; }
+.settings__head .settings__heading { margin: 0; }
+.settings__status { margin: 6px 0 0; max-width: 76ch; font-size: 13px; line-height: 1.55; color: var(--ink-2); }
+.settings__defaults { flex: none; padding-top: 8px; font-size: 12.5px; color: var(--ink-3); }
+fieldset.s-row__control { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings .s-row { flex-wrap: wrap; row-gap: 10px; }
+.settings .s-row__text { flex: 1 1 250px; }
+.settings .s-row__hint, .settings .s-group__note { max-width: 72ch; }
+.settings .s-row__control { max-width: 100%; }
+.settings .s-row--stacked { flex-wrap: nowrap; }
+.settings .s-row--stacked .s-row__text { flex: none; }
+.settings .s-row--actions { align-items: center; }
+.s-row.is-disabled .s-row__label { color: var(--ink-3); }
+.s-row.is-disabled .s-row__control { opacity: 0.4; pointer-events: none; }
+.s-row.is-disabled .s-row__control :disabled { opacity: 1; cursor: default; }
+.s-group--danger { margin-top: 52px; }
+.s-group--danger .s-group__title { color: #ff8589; }
+.s-anchor { display: inline-flex; }
+/* A control that search or a link jumped to is marked for a moment. */
+.settings [data-setting] { position: relative; }
+.settings [data-setting]::before { content: ''; position: absolute; inset: 0 -12px; border-radius: 10px; background: var(--accent-soft); opacity: 0; pointer-events: none; transition: opacity 700ms var(--ease-out); }
+.settings [data-setting][data-found]::before { opacity: 1; transition-duration: 140ms; }
+.settings [data-setting]:focus-visible { outline: none; }
+.s-adv { margin-bottom: 34px; border-top: 1px solid var(--line); }
+.s-adv__toggle { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 0; }
+.s-adv__chevron { flex: none; color: var(--ink-3); transform: rotate(-90deg); transition: transform 180ms var(--ease-out), color 130ms; }
+.s-adv.is-open .s-adv__chevron { transform: none; }
+.s-adv__toggle:hover .s-adv__chevron { color: var(--ink); }
+.s-adv__text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.s-adv__label { font-size: 14.5px; font-weight: 600; }
+.s-adv__contains { font-size: 13px; line-height: 1.45; color: var(--ink-3); }
+.s-adv__changed { flex: none; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); font-size: 12px; font-weight: 600; color: var(--accent-strong); }
+.s-adv__panel { padding-top: 16px; }
+.s-adv__panel > .s-group:last-child { margin-bottom: 0; }
+.s-seealso { margin: -6px 0 34px; font-size: 13px; color: var(--ink-3); }
+.s-link { border-radius: 4px; font-weight: 600; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; transition: color 130ms; }
+.s-link:hover { color: var(--accent-strong); }
+.s-results { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.s-result { position: relative; display: grid; gap: 3px; width: 100%; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.s-result::before { content: ''; position: absolute; inset: 0 -12px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); opacity: 0; pointer-events: none; transition: opacity 130ms; }
+.s-result:hover::before, .s-result:focus-visible::before { opacity: 1; }
+.s-result__label { font-size: 14.5px; font-weight: 600; }
+.s-result__place { font-size: 12px; font-weight: 600; color: var(--accent-strong); }
+.s-result__hint { max-width: 72ch; font-size: 13px; line-height: 1.45; color: var(--ink-3); }
+.addon__problem { margin: 0; font-size: 12.5px; color: var(--warn); }
+/* A dark swatch (a black subtitle outline) still shows its edge on the dark page. */
+.settings .swatch:not(.is-on) { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
+/* The subtitle preview stays in view (with its heading) while the settings under it are changed.
+   Its background reaches up behind the title bar, so rows scroll away under it and do not show again above. */
+.sub-look { padding-top: calc(var(--titlebar-h) - 26px); }
+.sub-look__top { position: sticky; top: 0; z-index: 2; margin-top: calc(-1 * (var(--titlebar-h) + 8px)); padding: calc(var(--titlebar-h) + 8px) 0 12px; background: var(--bg); }
+.sub-look__top .s-group__title { margin-bottom: 10px; }
+.sub-look .sub-preview { height: 132px; margin: 0; padding-bottom: var(--sub-lift, 16px); overflow: hidden; }
+.sub-look .sub-preview__text { font-family: var(--sub-font, inherit); line-height: 1.2; white-space: nowrap; }
+@media (max-height: 760px) {
+  .settings__title { margin-bottom: 12px; font-size: 26px; }
+  .settings__search { margin-bottom: 12px; }
+  .settings__group-label { display: none; }
+  .settings__group + .settings__group { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); }
+  .settings__link { height: 36px; }
+}
+@media (max-height: 680px) {
+  .settings__nav { padding-bottom: 12px; }
+  .settings__link { height: 32px; }
+  .settings__group + .settings__group { margin-top: 5px; padding-top: 5px; }
+}
+/* In a narrow window the list tightens so its longest name still fits on one line. */
+@media (max-width: 1100px) {
+  .settings__link { gap: 10px; padding: 0 10px; }
+  .settings__group-label { padding-left: 10px; }
+}
 
 /* ============ Profiles and first run ============ */
 .picker, .onboarding { position: relative; height: 100%; display: grid; place-items: center; overflow: hidden; }
@@ -863,6 +1112,10 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .menu__label { font-size: 14px; }
 .menu__detail { grid-column: 2; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .menu--more { width: 280px; }
+/* The heading of a menu that opened out of More: the way back to it. */
+.menu__back { width: 100%; display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 6px; margin-bottom: 4px; border-radius: 10px; font-size: 14px; font-weight: 650; color: var(--ink); text-align: left; transition: background-color 120ms; }
+.menu__back:hover { background: rgba(255, 255, 255, 0.08); }
+.menu__back svg { color: var(--ink-2); }
 .menu__item--nav { grid-template-columns: 26px 1fr auto; }
 .menu__item--nav .menu__label { white-space: nowrap; }
 .menu__check--icon { color: var(--ink-2); grid-row: auto; }
@@ -874,6 +1127,8 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .menu__hint { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
 
 .ep-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+/* The first of a season's extras carries the group's label. */
+.ep-list__extras::before { content: 'Extras'; display: block; margin: 18px 8px 8px; font-size: 13px; font-weight: 650; color: var(--ink-3); }
 .ep-item { width: 100%; display: flex; gap: 14px; align-items: center; padding: 8px; border-radius: var(--radius); transition: background-color 130ms; }
 .ep-item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
 .ep-item:disabled { cursor: default; }
@@ -906,6 +1161,6 @@ button.person:hover .person__img { transform: scale(1.05); box-shadow: 0 0 0 2px
 .player--pip .skip-btn { right: 12px; bottom: 70px; height: 34px; font-size: 13px; padding: 0 12px; }
 
 @media (max-width: 1100px) {
-  .settings { grid-template-columns: 290px minmax(0, 1fr); }
+  .settings { grid-template-columns: calc(var(--sidebar-w) + 232px) minmax(0, 1fr); }
   .hero__content { width: min(560px, 62vw); }
 }

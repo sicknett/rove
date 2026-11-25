@@ -3,15 +3,9 @@
 
 import { titleKey } from '../addons/ids';
 import type { ProgressEntry, WatchedEntry, MediaType } from '../state/history';
+import { byOrder, runningOrder, type EpisodeRef } from './episodes';
 
-export interface EpisodeRef {
-  id: string;
-  season: number;
-  episode: number;
-  released?: string;
-  title?: string;
-  thumbnail?: string;
-}
+export type { EpisodeRef } from './episodes';
 
 export interface ContinueItem {
   kind: 'resume' | 'next';
@@ -50,7 +44,6 @@ export interface ContinueResult {
 
 type Numbered = { season: number; episode: number };
 
-const byOrder = (a: Numbered, b: Numbered) => a.season - b.season || a.episode - b.episode;
 const markKey = (e: Numbered) => `${e.season}:${e.episode}`;
 
 /**
@@ -74,9 +67,13 @@ function airDay(released: string): [number, number, number] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-/** The first aired episode after `after` that is not in `watched` (`season:episode`). Null while the next one has not aired. */
+/**
+ * The first aired episode after `after` that is not in `watched` (`season:episode`). Null while
+ * the next one has not aired. Over the running order (library/episodes): specials and a season's
+ * extras never come next.
+ */
 export function nextEpisode(episodes: EpisodeRef[], after: { season: number; episode: number }, watched: Set<string>, now: number): EpisodeRef | null {
-  const list = episodes.filter((e) => e.season > 0).sort(byOrder);
+  const list = runningOrder(episodes);
   for (const e of list) {
     if (byOrder(e, after) <= 0) continue;
     if (watched.has(markKey(e))) continue;
@@ -119,7 +116,7 @@ export function seriesPosition(entries: Iterable<WatchedEntry>): SeriesPosition 
  */
 export function upNext(episodes: EpisodeRef[], pos: SeriesPosition, now: number): EpisodeRef | null {
   const again = (pos.latest.plays ?? 1) > 1;
-  const list = episodes.filter((e) => e.season > 0).sort(byOrder);
+  const list = runningOrder(episodes);
   for (const e of list) {
     if (byOrder(e, pos.latest) <= 0) continue;
     const mark = pos.marks.get(markKey(e));

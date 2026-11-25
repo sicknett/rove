@@ -48,10 +48,12 @@ const SmartCard = memo(function SmartCard({ c, rank }: { c: Candidate; rank?: nu
   if (rank === undefined) return card;
   return (
     <div className="rank" role="group" aria-label={`Number ${rank}`}>
-      <span className={`rank__num${rank >= 10 ? ' rank__num--wide' : ''}`} aria-hidden>
+      {card}
+      {/* Drawn before the card (styles.css `.rank__num`). Two figures for every place, so the row keeps one rhythm; the padding nought is dimmed. */}
+      <span className="rank__num" aria-hidden>
+        {rank < 10 && <span className="rank__zero">0</span>}
         {rank}
       </span>
-      {card}
     </div>
   );
 });

@@ -8,14 +8,13 @@ import { asMediaType, useTmdb } from '../../data/hooks';
 import { useSettings } from '../../state/settings';
 import { toggleWatchlist, useInWatchlist } from '../../library/watchlist';
 import { playTitle } from '../../player/launch';
+import { TrailerFrame, useSoloTrailer, type TrailerSound } from '../../media/TrailerFrame';
 
 const ROTATE_MS = 9000;
 /** How long a title has been showing before its trailer starts by itself. */
 const TRAILER_AUTO_MS = 2500;
 /** How long the pointer rests on the banner before its trailer starts, when trailers wait for that. */
 const TRAILER_HOVER_MS = 900;
-/** A trailer that has not started by now is given up on, and the banner moves along. */
-const TRAILER_GIVE_UP_MS = 14000;
 
 /**
  * The featured banner at the top of Home. It behaves the way streaming services' billboards do:
@@ -86,160 +85,15 @@ export function Hero({ items }: { items: MetaPreview[] }) {
   );
 }
 
-const YT_ORIGIN = 'https://www.youtube-nocookie.com';
-const SOUND_KEY = 'rove.trailerSound';
-/** YouTube draws its own buttons over the picture while a video starts; the trailer stays hidden until they are gone. */
-const REVEAL_AFTER_PLAYING_MS = 3200;
-
-const VOLUME_KEY = 'rove.trailerVolume';
-/** Out of 100. Trailers are mastered loud, and this is background sound on a menu. */
-const DEFAULT_VOLUME = 12;
-
-function trailerVolume(): number {
-  try {
-    const v = Number(localStorage.getItem(VOLUME_KEY));
-    return Number.isFinite(v) && v > 0 && v <= 100 ? v : DEFAULT_VOLUME;
-  } catch {
-    return DEFAULT_VOLUME;
-  }
-}
-
-function trailerSound(): boolean {
-  try {
-    return localStorage.getItem(SOUND_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A trailer in the banner, with nothing of YouTube's own interface showing: no playlist (so no
- * previous/next), no controls, and the frame is only faded in once the video is really playing.
- * The page talks to the player through YouTube's frame messages (sound on and off, "it ended").
- */
-function HeroTrailer({ id, name, paused, onShown, onEnded }: { id: string; name: string; paused: boolean; onShown: () => void; onEnded: () => void }) {
-  const frame = useRef<HTMLIFrameElement>(null);
-  const [visible, setVisible] = useState(false);
-  const [sound, setSound] = useState(trailerSound);
-  const soundRef = useRef(sound);
-  soundRef.current = sound;
-  const [volume, setVolume] = useState(trailerVolume);
-  const volumeRef = useRef(volume);
-  volumeRef.current = volume;
-  const shown = useRef(onShown);
-  shown.current = onShown;
-  const ended = useRef(onEnded);
-  ended.current = onEnded;
-
-  const command = (func: string, args: unknown[] = []) => frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), YT_ORIGIN);
-
-  useEffect(() => {
-    let reveal: number | undefined;
-    // No picture after a good while (blocked, removed, offline): the banner carries on without it.
-    const giveUp = window.setTimeout(() => reveal === undefined && ended.current(), TRAILER_GIVE_UP_MS);
-    const onMessage = (e: MessageEvent) => {
-      if (e.origin !== YT_ORIGIN || e.source !== frame.current?.contentWindow || typeof e.data !== 'string') return;
-      let data: { event?: string; info?: unknown };
-      try {
-        data = JSON.parse(e.data) as { event?: string; info?: unknown };
-      } catch {
-        return;
-      }
-      const state = data.event === 'onStateChange' ? data.info : data.event === 'infoDelivery' ? (data.info as { playerState?: number } | null)?.playerState : undefined;
-      if (state === 1 && reveal === undefined) {
-        if (soundRef.current) {
-          command('setVolume', [volumeRef.current]);
-          command('unMute');
-        }
-        reveal = window.setTimeout(() => {
-          setVisible(true);
-          shown.current();
-        }, REVEAL_AFTER_PLAYING_MS);
-      } else if (state === 0) {
-        ended.current();
-      }
-    };
-    window.addEventListener('message', onMessage);
-    return () => {
-      window.removeEventListener('message', onMessage);
-      window.clearTimeout(reveal);
-      window.clearTimeout(giveUp);
-    };
-  }, []);
-
-  const toggleSound = () => {
-    const next = !sound;
-    setSound(next);
-    try {
-      localStorage.setItem(SOUND_KEY, next ? '1' : '0');
-    } catch {
-      /* remembered for this run only */
-    }
-    if (next) command('setVolume', [volume]);
-    command(next ? 'unMute' : 'mute');
-  };
-
-  const changeVolume = (v: number) => {
-    setVolume(v);
-    try {
-      localStorage.setItem(VOLUME_KEY, String(v));
-    } catch {
-      /* remembered for this run only */
-    }
-    command('setVolume', [v]);
-    // Moving the slider is asking for sound.
-    if (!sound && v > 0) {
-      setSound(true);
-      try {
-        localStorage.setItem(SOUND_KEY, '1');
-      } catch {
-        /* as above */
-      }
-      command('unMute');
-    }
-  };
-
-  // Scrolled away or behind another screen: the video waits, and carries on when it is back.
-  const started = useRef(false);
-  useEffect(() => {
-    if (!started.current) {
-      started.current = true;
-      if (!paused) return;
-    }
-    command(paused ? 'pauseVideo' : 'playVideo');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paused]);
-
+/** The banner's sound controls, bottom right while a trailer shows: a volume slider that opens out, and the mute button. */
+function HeroSound({ sound, volume, toggleSound, changeVolume }: TrailerSound) {
   return (
-    <>
-      <iframe
-        ref={frame}
-        className={`hero__trailer ${visible ? 'is-visible' : ''} ${paused ? 'is-paused' : ''}`}
-        title={`${name} trailer`}
-        src={`${YT_ORIGIN}/embed/${id}?autoplay=1&mute=1&controls=0&rel=0&playsinline=1&iv_load_policy=3&disablekb=1&fs=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
-        allow="autoplay; encrypted-media"
-        tabIndex={-1}
-        // The player only reports its state to a page that has said it is listening.
-        onLoad={() => frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), YT_ORIGIN)}
-      />
-      {visible && !paused && (
-        <div className="hero__sound">
-          <input
-            className="hero__volume"
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={sound ? volume : 0}
-            aria-label="Trailer volume"
-            onChange={(e) => changeVolume(Number(e.target.value))}
-          />
-          <IconButton label={sound ? 'Mute the trailer' : 'Turn the trailer sound on'} size="lg" className="ibtn--glass" onClick={toggleSound}>
-            {sound ? <Volume2 size={20} /> : <VolumeX size={20} />}
-          </IconButton>
-        </div>
-      )}
-    </>
+    <div className="hero__sound">
+      <input className="hero__volume" type="range" min={0} max={100} step={1} value={sound ? volume : 0} aria-label="Trailer volume" onChange={(e) => changeVolume(Number(e.target.value))} />
+      <IconButton label={sound ? 'Mute the trailer' : 'Turn the trailer sound on'} size="lg" className="ibtn--glass" onClick={toggleSound}>
+        {sound ? <Volume2 size={20} /> : <VolumeX size={20} />}
+      </IconButton>
+    </div>
   );
 }
 
@@ -267,6 +121,8 @@ function HeroSlide({ meta, active, near, live, hovered, onTrailer, onTrailerEnd 
   const [played, setPlayed] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const trailerId = tmdb.data?.trailer;
+  // A poster's hover preview is playing its own trailer: the banner's waits, as when out of sight.
+  const waiting = useSoloTrailer() || !live;
 
   useEffect(() => {
     if (!active) setPlayed(false);
@@ -305,13 +161,16 @@ function HeroSlide({ meta, active, near, live, hovered, onTrailer, onTrailerEnd 
   const card = { metaId: meta.id, type, name: meta.name, poster: meta.poster, background: meta.background, logo, year };
 
   return (
-    <div className={`hero__slide ${active ? 'is-active' : ''} ${playing && live ? 'is-playing' : ''}`} aria-hidden={!active} inert={!active}>
+    <div className={`hero__slide ${active ? 'is-active' : ''} ${playing && !waiting ? 'is-playing' : ''}`} aria-hidden={!active} inert={!active}>
       {near && <Img src={background} alt="" className="hero__backdrop" loading="eager" />}
       {active && showTrailer && trailerId && (
-        <HeroTrailer
+        // The shared frame gives up on a trailer that never starts (onEnded), and the banner moves along.
+        <TrailerFrame
           id={trailerId}
           name={meta.name}
-          paused={!live}
+          paused={waiting}
+          className="hero__trailer"
+          controls={(sound) => <HeroSound {...sound} />}
           onShown={() => setPlaying(true)}
           onEnded={() => {
             setPlayed(true);

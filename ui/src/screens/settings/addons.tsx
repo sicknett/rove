@@ -7,7 +7,9 @@ import { Button, Dialog, IconButton, Switch, TextField } from '../../ui/controls
 import { Img } from '../../ui/Img';
 import { toast } from '../../ui/toast';
 import { send } from '../../bridge';
+import { count } from './format';
 import { Group, SettingRow } from './parts';
+import { useAddonRefresh } from './status';
 
 const RESOURCES: { id: Resource; label: string }[] = [
   { id: 'catalog', label: 'Catalogs' },
@@ -86,11 +88,13 @@ export function AddonsSection() {
   const [link, setLink] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const adding = useAddonInstall(() => setLink(''));
+  // Who did not answer the last "Refresh all", so their rows can say so.
+  const unanswered = useAddonRefresh((s) => s.failed);
 
   // The saved list is there but could not be read: nothing can be added or changed until it can.
   if (unreadable)
     return (
-      <Group title="Addons">
+      <Group id="addons.installed" title="Addons">
         <SettingRow label="Your addons could not be loaded" hint={ADDONS_UNREADABLE}>
           <Button variant="primary" onClick={() => void load()}>
             Try again
@@ -101,17 +105,18 @@ export function AddonsSection() {
 
   return (
     <>
-      <Group title="Add an addon" note="Paste the manifest link from the addon's configure page (it ends in /manifest.json). Links can carry your configuration, so they are stored encrypted.">
+      <Group id="addons.install" title="Add an addon" note="Paste the manifest link from the addon’s configure page (it ends in /manifest.json). Links can carry your configuration and its keys, so they are stored encrypted. Addons are shared by every profile.">
         <div className="inline-form inline-form--pad">
-          <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" error={adding.error} onKeyDown={(e) => e.key === 'Enter' && void adding.install(link)} />
+          <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" aria-label="Manifest link" error={adding.error} onKeyDown={(e) => e.key === 'Enter' && void adding.install(link)} />
           <Button variant="primary" icon={<Plus size={16} />} busy={adding.busy} disabled={!link.trim()} onClick={() => void adding.install(link)}>
             Install
           </Button>
         </div>
       </Group>
       <Group
-        title={`Installed · ${addons.length}`}
-        note="Order matters: metadata and sources are asked in this order, and the first addon's answer wins for metadata."
+        id="addons.installed"
+        title="Installed"
+        note="Order matters: metadata and sources are asked in this order, and the first addon’s answer wins for metadata. The chips under an addon switch off one part of it (its catalogs, say) and keep the rest; the switch turns the whole addon off without removing it."
       >
         <div className="s-row s-row--actions">
           <Button
@@ -123,7 +128,8 @@ export function AddonsSection() {
               setRefreshing(true);
               try {
                 const { failed } = await refreshManifests();
-                if (!failed.length) toast.success('Addons refreshed');
+                useAddonRefresh.getState().report(failed);
+                if (!failed.length) toast.success(`${count(addons.length, 'addon')} refreshed`);
                 else toast.error(`${failed.join(', ')} did not answer. ${failed.length < addons.length ? 'The others were refreshed.' : 'Nothing was refreshed.'}`);
               } finally {
                 setRefreshing(false);
@@ -134,7 +140,7 @@ export function AddonsSection() {
           </Button>
         </div>
         {addons.map((a, i) => (
-          <AddonRow key={a.url} addon={a} index={i} count={addons.length} />
+          <AddonRow key={a.url} addon={a} index={i} total={addons.length} unanswered={unanswered.includes(a.manifest.name)} />
         ))}
         {!addons.length && <p className="s-empty">No addons yet. Add a metadata addon (such as AIOMetadata or Cinemeta) and a stream addon (such as AIOStreams) above.</p>}
       </Group>
@@ -143,7 +149,7 @@ export function AddonsSection() {
   );
 }
 
-function AddonRow({ addon, index, count }: { addon: InstalledAddon; index: number; count: number }) {
+function AddonRow({ addon, index, total, unanswered }: { addon: InstalledAddon; index: number; total: number; unanswered: boolean }) {
   const { setEnabled, move, remove, toggleResource, restore } = useAddons.getState();
   const m = addon.manifest;
   const configurable = m.behaviorHints?.configurable;
@@ -156,6 +162,7 @@ function AddonRow({ addon, index, count }: { addon: InstalledAddon; index: numbe
           <span className="addon__version">v{m.version}</span>
           <span className="addon__host">{addonHost(addon.url)}</span>
         </div>
+        {unanswered && <p className="addon__problem">Did not answer the last refresh. What it gave before is still in use.</p>}
         {m.description && <p className="addon__desc">{m.description}</p>}
         <div className="chips">
           {RESOURCES.filter((r) => provides({ ...addon, disabledResources: [] }, r.id)).map((r) => {
@@ -173,11 +180,11 @@ function AddonRow({ addon, index, count }: { addon: InstalledAddon; index: numbe
         <IconButton label="Move up" size="sm" disabled={index === 0} onClick={() => move(addon.url, index - 1)}>
           <ArrowUp size={16} />
         </IconButton>
-        <IconButton label="Move down" size="sm" disabled={index === count - 1} onClick={() => move(addon.url, index + 1)}>
+        <IconButton label="Move down" size="sm" disabled={index === total - 1} onClick={() => move(addon.url, index + 1)}>
           <ArrowDown size={16} />
         </IconButton>
         {configurable && (
-          <IconButton label="Configure" size="sm" onClick={() => send({ t: 'open-external', url: addon.url.replace(/\/manifest\.json$/i, '/configure') })}>
+          <IconButton label="Configure in your browser" size="sm" onClick={() => send({ t: 'open-external', url: addon.url.replace(/\/manifest\.json$/i, '/configure') })}>
             <ExternalLink size={16} />
           </IconButton>
         )}

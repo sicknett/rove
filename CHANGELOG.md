@@ -5,6 +5,71 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-25
+
+**Added**
+- Resting the pointer on a poster in a row opens it where it sits: the card widens into a 16:9
+  preview with the title's backdrop, then its trailer, with the logo, year, age rating, length
+  and genres, and Play, Watchlist, Details and a sound button. The row slides just enough to
+  keep it whole, one preview is open at a time, and the banner's trailer waits meanwhile.
+  Appearance has a switch for it; Reduce motion turns it off too.
+- Rows can be dragged with the mouse: click, hold and pull. Let go and the row carries on a
+  little and comes to rest on a card. A drag never opens the card it ended on.
+- Search is rebuilt. Before you type: recent searches, Trending now, genre tiles and popular
+  people. As you type: a best match with Play, Details and Watchlist, then rows for Movies,
+  Shows, People, your media servers, your library and what addons add; chips to narrow by kind,
+  a sort, and a year typed at the end works as a year filter ("dune 2021"). The whole page works
+  from the keyboard.
+- Discover is rebuilt around finding something: filters for genres, years, rating, length,
+  language and where to watch (by country), starting points such as Critically acclaimed, Hidden
+  gems and Under 90 minutes, Surprise me, and Save to Home, which turns the current search into a
+  Home row that stays current. The addon catalog browser is still there, under Catalogs.
+- A font picker for subtitles: Segoe UI, Arial, Verdana, Trebuchet, Bahnschrift, Georgia and
+  Consolas, each shown in its own face. All come with Windows, which is what the player draws
+  with. Segoe UI is the new default; the old default, Inter, was never available to the player.
+- Settings is reorganised: sections grouped as Watching, Home and look, Content and This PC; a
+  search box (Ctrl+F) that finds any setting; rarely changed settings under Advanced; and a
+  reset for each section, with Undo.
+- The player's Speed and Picture menus have a Back heading that returns to More, and Escape goes
+  back one level instead of closing everything.
+
+**Changed**
+- Top 10 rows: each place now has its own narrow column beside the poster ("01" to "10"),
+  instead of a large numeral behind the art.
+- The row arrows are small round buttons level with the middle of the posters. They were tall
+  strips of shade that dimmed half of the first and last poster.
+- The Update button (unsigned builds) hands the new Setup's own download link to the browser, so
+  the file downloads straight away with no web page to click through. Installing from inside the
+  app stays a build option for code-signed builds.
+
+**Fixed**
+- Hovering a card in a row cut off its top edge and glow: each card was being clipped to its own
+  box. The hovered card is no longer clipped, and rows leave room above for the lift.
+- Seasons with specials or extras drew wrong episodes or left stale ones behind after switching
+  season. Addons that list a video twice gave two rows the same identity; the title page and
+  the player's episode list now share one guide that keeps them apart, with numbered seasons
+  first, then Specials, and a season's extras after its episodes.
+- Library posters were often blank. Posters now come from TMDB by the title's id first and from
+  the addons second, and one that fails to load is replaced instead of left empty.
+
+**Checked**
+- In a test copy of this build (its own data folder, a copy of a real history): the picture
+  plays; a poster's preview opens in place, shows the backdrop and then plays the trailer while
+  the banner's trailer waits ([preview](docs/screenshots/home-preview.jpg)); a row dragged with
+  a simulated mouse follows it, carries on and rests on a card without opening one; the round
+  arrows; the Top 10 columns ([Top 10](docs/screenshots/home-top10.jpg)); Speed and Picture go
+  back to More by the heading and by Escape ([Speed](docs/screenshots/player-speed.jpg)); a
+  saved "Inter" becomes Segoe UI in the picker, and the player draws a test subtitle in Segoe UI
+  and, switched, in Georgia; Search before typing and for "dune 2021"
+  ([search](docs/screenshots/search.jpg)); Discover ([discover](docs/screenshots/discover.jpg));
+  Library with every poster on screen loaded; Supernatural's Specials, seasons 2, 15 and 1 in
+  turn, each with its own episodes.
+- Type check clean; 518 unit tests pass; Windows Defender finds nothing in the program or the
+  Setup, and raised nothing while the test copy ran.
+- Not checked: dragging with a real mouse (the drag was simulated inside the page); how the
+  preview's motion feels; Search results from a real media server; Ask with a real key; the
+  Update button's download, which can only be tried from this version once a newer one exists.
+
 ## 0.2.3 — 2026-11-25
 
 **Fixed**

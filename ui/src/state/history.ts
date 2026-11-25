@@ -157,6 +157,14 @@ interface HistoryState extends HistoryDoc {
   toggleLibrary: (item: Omit<LibraryItem, 'addedAt'>) => boolean;
   setLibrary: (items: Record<string, LibraryItem>) => void;
   rememberCard: (metaId: string, type: MediaType, card: TitleCard) => void;
+  /** `rememberCard` for many titles at once: one change to the store and one write, not one per title. */
+  rememberCards: (list: { metaId: string; type: MediaType; card: TitleCard }[]) => void;
+  /**
+   * Takes picture links that no longer load out of everything that holds them (cards, watchlist
+   * items, resume points), so no card keeps showing a broken one. Nothing else about the
+   * entries changes.
+   */
+  forgetArt: (urls: string[]) => void;
   /** Applies a tracker pull. Local changes newer than the pull win. */
   applyRemote: (remote: RemoteHistory, pulledAt: number) => void;
   /**
@@ -410,11 +418,47 @@ export const useHistory = create<HistoryState>((set, get) => {
     },
 
     rememberCard(metaId, type, card) {
-      const key = titleKey(canonicalNow(metaId, type), type);
-      const prev = get().cards[key];
-      const next = { ...prev, ...Object.fromEntries(Object.entries(card).filter(([, v]) => v)), type };
-      if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;
-      commit({ cards: { ...get().cards, [key]: next } });
+      get().rememberCards([{ metaId, type, card }]);
+    },
+
+    rememberCards(list) {
+      let cards = get().cards;
+      let changed = false;
+      for (const { metaId, type, card } of list) {
+        const key = titleKey(canonicalNow(metaId, type), type);
+        const prev = cards[key];
+        const next = { ...prev, ...Object.fromEntries(Object.entries(card).filter(([, v]) => v)), type };
+        if (prev && JSON.stringify(prev) === JSON.stringify(next)) continue;
+        if (!changed) cards = { ...cards };
+        cards[key] = next;
+        changed = true;
+      }
+      if (changed) commit({ cards });
+    },
+
+    forgetArt(urls) {
+      const dead = new Set(urls);
+      if (!dead.size) return;
+      const s = get();
+      const scrub = <T extends TitleCard>(all: Record<string, T>): Record<string, T> | undefined => {
+        let next: Record<string, T> | undefined;
+        for (const [k, e] of Object.entries(all)) {
+          const fields = (['poster', 'background', 'logo'] as const).filter((f) => e[f] !== undefined && dead.has(e[f]!));
+          if (!fields.length) continue;
+          const clean = { ...e };
+          for (const f of fields) delete clean[f];
+          (next ??= { ...all })[k] = clean;
+        }
+        return next;
+      };
+      const patch: Partial<HistoryDoc> = {};
+      const cards = scrub(s.cards);
+      const library = scrub(s.library);
+      const progress = scrub(s.progress);
+      if (cards) patch.cards = cards;
+      if (library) patch.library = library;
+      if (progress) patch.progress = progress;
+      if (cards || library || progress) commit(patch);
     },
 
     applyRemote(remote, pulledAt) {
@@ -638,7 +682,8 @@ export function rekeyHistory(doc: HistoryDoc, canonical: (metaId: string, type: 
   for (const [key, item] of libraryMoves) {
     const there = library[key];
     const [keep, drop] = !there || item.addedAt > there.addedAt ? [item, there] : [there, item];
-    library[key] = { ...drop, ...keep, name: keep.name ?? drop?.name, poster: keep.poster ?? drop?.poster, synced: keep.synced || drop?.synced || undefined };
+    // `defined`: a field the kept item holds as undefined does not blank the other one's art.
+    library[key] = { ...drop, ...defined(keep), name: keep.name ?? drop?.name, poster: keep.poster ?? drop?.poster, synced: keep.synced || drop?.synced || undefined };
     changed = true;
   }
 

@@ -5,7 +5,7 @@
 import { addonsFor, fetchMeta } from '../addons/client';
 import { episodeId, parseId, tmdbTitleNumber, watchKey } from '../addons/ids';
 import type { Meta, Video } from '../addons/types';
-import { episodesOf } from '../data/hooks';
+import { episodeGuide, episodesOf } from '../data/hooks';
 import { seriesPosition, upNext, type EpisodeRef } from '../library/continue';
 import { serversFor } from '../servers';
 import { useHistory, type MediaType, type ProgressEntry } from '../state/history';
@@ -57,7 +57,8 @@ export function resumePoint(progress: Record<string, ProgressEntry>, metaId: str
 
 /** The episode a series "Play" should start. */
 export function pickEpisode(meta: Meta, metaId: string): { ep: EpisodeRef; resume: boolean } | null {
-  const eps = episodesOf(meta).filter((e) => e.season > 0);
+  // The running order (library/episodes): specials and a season's extras are never what Play starts.
+  const eps = episodeGuide(meta).main;
   if (!eps.length) return null;
   const id = canonicalNow(metaId, 'series');
   const h = useHistory.getState();
@@ -75,7 +76,7 @@ export function pickEpisode(meta: Meta, metaId: string): { ep: EpisodeRef; resum
     const next = upNext(eps, pos, Date.now());
     if (next) return { ep: next, resume: false };
   }
-  return { ep: [...eps].sort((a, b) => a.season - b.season || a.episode - b.episode)[0], resume: false };
+  return { ep: eps[0], resume: false };
 }
 
 export async function episodeTarget(meta: Meta | null, metaId: string, ep: EpisodeRef, card?: Partial<CardTitle>): Promise<PlayTarget> {

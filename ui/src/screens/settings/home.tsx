@@ -1,3 +1,6 @@
+// Settings → Home layout: everything about the banner in one place, the options for rows, and
+// the rows themselves (on or off, names, order, which ones feed the banner).
+
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, FolderPen, Pencil, Sparkles, RotateCcw, Trash2 } from 'lucide-react';
 import { navigate } from '../../nav/router';
@@ -13,9 +16,19 @@ import { useRecs } from '../../recs/engine';
 import { useHiddenCount, useSmartRowDefs } from '../../recs/hooks';
 import { BUILT_IN_TMDB_KEY, useKeys } from '../../state/keys';
 import { assistantName, useAssistantSettings } from '../../ai';
-import { useSettings } from '../../state/settings';
-import { Button, IconButton, Select, Switch, TextField } from '../../ui/controls';
-import { Group, SettingRow } from './parts';
+import { useSettings, type Settings } from '../../state/settings';
+import { Button, IconButton, Segmented, Switch, TextField } from '../../ui/controls';
+import { toast } from '../../ui/toast';
+import { count } from './format';
+import { Anchor, Group, SeeAlso, SettingLink, SettingRow } from './parts';
+
+type HeroSource = Settings['appearance']['heroSource'];
+
+const SOURCE_HINT: Record<HeroSource, string> = {
+  auto: 'Titles from the rows starred in the list below, or from the first row when none is starred.',
+  continue: 'What you are partway through. With nothing in progress, the starred rows fill in.',
+  watchlist: 'The newest titles on your watchlist. While it is empty, the starred rows fill in.',
+};
 
 export function HomeSection() {
   const addons = useCatalogSources();
@@ -40,7 +53,7 @@ export function HomeSection() {
     for (const a of addons.filter((x) => x.enabled))
       for (const c of homeCatalogs(a))
         names.set(catalogKey(a, c), isServerAddon(a) ? { title: c.name, detail: 'Media server' } : { title: `${c.name} · ${c.type === 'movie' ? 'Movies' : c.type === 'series' ? 'Shows' : c.type}`, detail: a.manifest.name });
-    for (const c of collections) names.set(`collection_${c.id}`, { title: c.title, detail: `Collection · ${c.folders.length} folders` });
+    for (const c of collections) names.set(`collection_${c.id}`, { title: c.title, detail: `Collection · ${count(c.folders.length, 'folder')}` });
     // Lists imported as rows of their own, named with where each comes from.
     for (const l of lists) names.set(listRowKey(l.id), { title: l.title, detail: `List · ${sourceOrigin(l.source)}` });
     const rows = [...layout.items]
@@ -52,81 +65,104 @@ export function HomeSection() {
   }, [addons, collections, lists, layout.items, assistant, smart]);
 
   const visibleKeys = rows.map((r) => r.key);
+  const shown = rows.filter((r) => r.enabled).length;
+  const starred = rows.filter((r) => r.hero && r.enabled).length;
+
+  // The banner is switched in two places that are kept the same: the Home layout and the appearance settings.
+  const bannerOn = layout.heroEnabled && appearance.heroEnabled;
+  const bannerOff = !bannerOn && 'The banner is off.';
+  const needsTmdb = (what: string) => (
+    <>
+      {what} come from TMDB, and there is no TMDB key. Add one under <SettingLink to="accounts.tmdb">Accounts</SettingLink>.
+    </>
+  );
+
+  const resetRows = () => {
+    const before = { heroEnabled: layout.heroEnabled, items: layout.items };
+    layout.reset(
+      keys,
+      // Placed right after Continue Watching, as when they first appeared.
+      [...smart.map((d) => d.key), ...collections.filter((c) => c.pinToTop).map((c) => `collection_${c.id}`)],
+    );
+    toast.info('Every row is back on, under its own name, in the original order', {
+      label: 'Undo',
+      run: () => {
+        // The saved order and names go back as they were; the switch that follows writes them out.
+        useHomeLayout.setState({ items: before.items });
+        useHomeLayout.getState().setHeroEnabled(before.heroEnabled);
+      },
+    });
+  };
 
   return (
     <>
-      <Group title="Top of Home">
-        <SettingRow label="Featured banner" hint="Rotating titles with their art, from the rows marked with a star">
-          <Switch checked={layout.heroEnabled && appearance.heroEnabled} onChange={(v) => (layout.setHeroEnabled(v), set('appearance', { heroEnabled: v }))} label="Featured banner" />
+      <Group title="Banner">
+        <SettingRow id="appearance.heroEnabled">
+          <Switch checked={bannerOn} onChange={(v) => (layout.setHeroEnabled(v), set('appearance', { heroEnabled: v }))} label="Show the banner" />
         </SettingRow>
-        <SettingRow label="Banner shows" hint="Automatic takes titles from the starred rows below, or the first row when none is starred">
-          <Select
-            label="Banner shows"
+        <SettingRow id="appearance.heroSource" hint={SOURCE_HINT[appearance.heroSource]} disabled={bannerOff}>
+          <Segmented<HeroSource>
+            label="The banner features"
             value={appearance.heroSource}
             onChange={(v) => set('appearance', { heroSource: v })}
             options={[
-              { value: 'auto', label: 'Automatic' },
+              { value: 'auto', label: 'Starred rows' },
               { value: 'continue', label: 'Continue Watching' },
               { value: 'watchlist', label: 'My watchlist' },
             ]}
           />
         </SettingRow>
-        <SettingRow label="Play trailers in the banner" hint="The trailer fades in over the picture and the banner moves on when it ends. Sound is off until you turn it on with the button on the banner">
-          <Switch checked={appearance.heroTrailers} onChange={(v) => set('appearance', { heroTrailers: v })} label="Trailers in the banner" />
+        <SettingRow id="appearance.heroTrailers" disabled={bannerOff || (!hasTmdbKey && needsTmdb('Trailers'))}>
+          <Switch checked={appearance.heroTrailers} onChange={(v) => set('appearance', { heroTrailers: v })} label="Play trailers in the banner" />
         </SettingRow>
-        {appearance.heroTrailers && (
-          <SettingRow label="Trailers start" hint="By themselves after a moment on a title, or only while the pointer rests on the banner">
-            <Select
-              label="Trailers start"
-              value={appearance.heroTrailerStart}
-              onChange={(v) => set('appearance', { heroTrailerStart: v })}
-              options={[
-                { value: 'auto', label: 'Automatically' },
-                { value: 'hover', label: 'On hover' },
-              ]}
-            />
-          </SettingRow>
-        )}
-        <SettingRow label="Wide Continue Watching cards" hint="Episode stills instead of posters">
-          <Switch checked={appearance.landscapeContinueWatching} onChange={(v) => set('appearance', { landscapeContinueWatching: v })} label="Wide Continue Watching cards" />
+        <SettingRow id="appearance.heroTrailerStart" disabled={bannerOff || (!hasTmdbKey && needsTmdb('Trailers')) || (!appearance.heroTrailers && 'Banner trailers are off.')}>
+          <Segmented
+            label="Banner trailers start"
+            value={appearance.heroTrailerStart}
+            onChange={(v) => set('appearance', { heroTrailerStart: v })}
+            options={[
+              { value: 'auto', label: 'By themselves' },
+              { value: 'hover', label: 'When pointed at' },
+            ]}
+          />
         </SettingRow>
       </Group>
-      <Group title="Made for you">
-        <SettingRow
-          label="Rows made for you"
-          hint={
-            hasTmdbKey
-              ? 'Top picks, Because you watched, Trending, the Top 10s, New releases and your genres, worked out on this PC from what you watch and looked up on TMDB. No account and no AI key needed. Each row can be moved, renamed or switched off below.'
-              : 'These rows are looked up on TMDB, and this build has no TMDB key. Add one in Settings → Accounts.'
-          }
-        >
+
+      <Group title="Rows">
+        <SettingRow id="appearance.landscapeContinueWatching">
+          <Switch checked={appearance.landscapeContinueWatching} onChange={(v) => set('appearance', { landscapeContinueWatching: v })} label="Wide Continue Watching cards" />
+        </SettingRow>
+        <SettingRow id="appearance.smartRows" disabled={!hasTmdbKey && needsTmdb('These rows')}>
           <Switch checked={appearance.smartRows} onChange={(v) => set('appearance', { smartRows: v })} label="Rows made for you" />
         </SettingRow>
         {appearance.smartRows && hiddenCount > 0 && (
-          <SettingRow label="Not interested" hint={`${hiddenCount} ${hiddenCount === 1 ? 'title is' : 'titles are'} kept out of these rows because you marked ${hiddenCount === 1 ? 'it' : 'them'} Not interested`}>
+          <SettingRow id="home.notInterested" hint={`${hiddenCount === 1 ? '1 title is' : `${hiddenCount} titles are`} kept out of the rows made for you because you marked ${hiddenCount === 1 ? 'it' : 'them'} Not interested.`}>
             <Button variant="secondary" size="sm" onClick={() => useRecs.getState().clearHidden()}>
               Allow {hiddenCount === 1 ? 'it' : 'them'} again
             </Button>
           </SettingRow>
         )}
       </Group>
-      <Group title="Rows" note="Turn rows on or off, rename them, and move them. The star marks rows the banner takes titles from (two at most is best). The folder button opens a collection's folders for editing, and the bin takes an imported list off Home. Home shows rows in this order.">
+
+      <Group
+        id="home.rows"
+        title={`Row order · ${shown} of ${rows.length} shown`}
+        note={
+          <>
+            Home shows the rows in this order. The star marks a row the banner takes titles from when it features starred rows ({starred ? `${count(starred, 'row')} now` : 'none now, so it uses the first row'}; two at most works best). The
+            folder opens a collection’s folders, and the bin takes an imported list off Home.
+          </>
+        }
+      >
         <div className="s-row s-row--actions">
-          <ImportListsButton size="sm" />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RotateCcw size={15} />}
-            onClick={() =>
-              layout.reset(
-                keys,
-                // Placed right after Continue Watching, as when they first appeared.
-                [...smart.map((d) => d.key), ...collections.filter((c) => c.pinToTop).map((c) => `collection_${c.id}`)],
-              )
-            }
-          >
-            Reset layout
-          </Button>
+          <Anchor id="home.import">
+            <ImportListsButton size="sm" />
+          </Anchor>
+          <Anchor id="home.resetRows">
+            <Button variant="ghost" size="sm" icon={<RotateCcw size={15} />} onClick={resetRows}>
+              Reset rows
+            </Button>
+          </Anchor>
         </div>
         {rows.map((r, i) => (
           <div key={r.key} className={`layout-row ${r.enabled ? '' : 'is-off'}`}>
@@ -138,6 +174,7 @@ export function HomeSection() {
                   value={draft}
                   onChange={setDraft}
                   placeholder={r.title}
+                  aria-label={`Name for ${r.title}`}
                   onBlur={() => (layout.setRow(r.key, { customTitle: draft.trim() || undefined }), setEditing(null))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -153,7 +190,7 @@ export function HomeSection() {
             </div>
             <div className="layout-row__actions">
               {r.key !== CONTINUE_KEY && r.key !== FOR_YOU_KEY && !isSmartKey(r.key) && !r.key.startsWith('collection_') && !r.key.startsWith(LIST_ROW_PREFIX) && (
-                <IconButton label={r.hero ? 'Stop featuring this row' : 'Feature this row in the banner'} size="sm" active={r.hero} onClick={() => layout.setRow(r.key, { hero: !r.hero })}>
+                <IconButton label={r.hero ? 'Stop featuring this row in the banner' : 'Feature this row in the banner'} size="sm" active={r.hero} aria-pressed={!!r.hero} onClick={() => layout.setRow(r.key, { hero: !r.hero })}>
                   <Sparkles size={16} />
                 </IconButton>
               )}
@@ -179,7 +216,12 @@ export function HomeSection() {
             </div>
           </div>
         ))}
+        {!rows.length && <p className="s-empty">No rows yet. Rows appear here once an addon with catalogs, a media server or a collection is added.</p>}
       </Group>
+
+      <SeeAlso>
+        Poster size, ratings and hover previews are under <SettingLink to="appearance.cardSize">Appearance</SettingLink>.
+      </SeeAlso>
     </>
   );
 }

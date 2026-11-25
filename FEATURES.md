@@ -48,19 +48,29 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [~] Lists as rows or folders from Trakt, MDBList and media servers (public Trakt lists read for real; accounts not yet)
 - [~] "For you" row from the AI assistant, refreshed at most daily (stand-in service only)
 - [x] Card hover lift and art; keyboard focus rings; right-click menus
+- [x] Resting on a poster in a row opens it in place: it widens to a 16:9 preview with the backdrop, then the trailer, the logo, year, age rating, length and genres, and Play, Watchlist, Details and a sound button; one at a time, the banner's trailer waits meanwhile; a setting turns it off (seen in a test copy with a real trailer; how the motion feels is for the user to judge)
+- [x] Top 10 rows: each place in its own narrow column beside the poster ("01" to "10"), never over the art
+- [x] Rows scroll by round arrow buttons, the wheel or trackpad, or by clicking and dragging with the mouse (a drag carries on a little and rests on a card; it never opens the card it ended on)
 - [x] "See all" opens the full catalog
 
-## 4. Browse and search
-- [x] Discover: Movies/Shows, catalog picker, genre chips, virtualised grid with infinite scroll
-- [x] Search every catalog that supports it, debounced, grouped by type, recent searches
+## 4. Search and Discover
+- [x] Search before typing: recent searches (remove one, clear all), Trending now, genre tiles for movies or shows that open Discover, popular people this week
+- [x] Search as you type (TMDB first, then what addons and media servers add): best match on top with Play, Details and Watchlist; rows for Movies, Shows, People, On your servers, In your library and From your addons; chips for All, Movies, Shows, People; sort by best match, popular, newest or top rated
+- [x] A year typed at the end narrows by year ("dune 2021")
+- [x] Search by keyboard: arrows move through results, Enter opens the best match, Escape clears and then leaves; typing on a card carries on in the box
 - [~] Open an IMDb or TMDB id directly from Search
 - [~] Ctrl+K or / to search from anywhere; Alt+←/→ and mouse back/forward buttons
-- [~] Ask: describe what you want in plain words and get real titles with reasons (Claude, Gemini or an OpenAI-compatible key; stand-in service only so far)
+- [~] Ask: describe what you want in plain words and get real titles with reasons (Claude, Gemini or an OpenAI-compatible key; stand-in service only so far); "Nothing found" offers to ask instead
+- [x] Discover finds titles by filters: movies or shows, several genres, release years, rating, length, language, where to watch (by country), sort; active filters as removable chips with a count; the filters are part of the page's history, so Back restores them
+- [x] Discover starting points (Critically acclaimed, Hidden gems, Under 90 minutes, New this month, …) and Surprise me (a well-rated pick from the current filters, preferring what you have not watched)
+- [x] Save a Discover search to Home as a row that stays current
+- [x] Discover → Catalogs: every addon catalog with its genres, virtualised grid with infinite scroll
+- [ ] Search results from a media server seen with a real server
 
 ## 5. Title page
 - [x] Backdrop, logo art, rating, year, runtime, age rating, genres, tagline, overview
 - [x] Play / Resume with what is next ("Play S1 E3 · …"), Sources, Trailer, Watchlist, More
-- [x] Season tabs (Specials last), episode cards with still, air date, overview, watched tick and progress
+- [x] Season tabs (a picker when there are many; Specials last; a season's extras after its episodes), episode cards with still, air date, overview, watched tick and progress; one guide shared with the player's episode list, safe against addons that list a video twice
 - [x] Mark an episode, everything up to an episode, a season or the whole show watched or unwatched
 - [~] Cast with photos, More like this, director and writer (needs a TMDB key)
 - [~] Unaired episodes show their air date and do not play
@@ -88,10 +98,10 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [~] "Are you still watching?" after N episodes without input
 - [~] Skip intro, recap and credits: chapter names, TheIntroDB, IntroDB, PublicMetaDB, AniSkip; button or automatic (merging unit tested)
 - [~] Episode list (season picker, descriptions, opens on the playing episode) and source switcher inside the player
-- [x] Button names at once on hover; less-used controls in one More menu
+- [x] Button names at once on hover; less-used controls in one More menu; Speed and Picture open in its place with a Back heading (Escape goes back one level)
 - [~] Subtitles from subtitle addons added as tracks
 - [x] Track choice: the show's remembered choice, then preferred languages; forced / foreign-audio / always / off (unit tested)
-- [~] Subtitle style: size, colour, outline, shadow or box, bold, position, live preview
+- [~] Subtitle style: font (seven faces that come with Windows, each shown in its own face), size, colour, outline, shadow or box, bold, position, live preview
 - [~] Picture: fit, fill, zoom, 16:9, 4:3, 2.39:1; hardware decoding switch
 - [~] Picture in picture: small always-on-top window in the corner, restores exactly
 - [~] Windows media controls: media keys, headset buttons, volume flyout with title and poster
@@ -117,11 +127,12 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [~] Trakt lists as collection sources (public lists read for real)
 
 ## 9. Library and calendar
-- [x] Library: Watchlist (sort, filter), Continue Watching, History, Collections (import, reorder, delete)
+- [x] Library: Watchlist (sort, filter), Continue Watching, History, Collections (import, reorder, delete); posters come from TMDB by the title's id first, then from addons, and a poster that fails to load is replaced rather than left blank
 - [~] Calendar: coming up and recently aired episodes of shows you watch or saved
 
 ## 10. Settings
-- [x] Accounts, Addons, Home layout, Playback, Sources, Languages & subtitles, Audio, Appearance, Profiles, Data, About
+- [x] Grouped sections: Watching (Playback, Subtitles & languages, Audio), Home and look (Home layout, Appearance), Content (Addons, Media servers, Accounts), This PC (Profiles, Data, About)
+- [x] Search every setting (Ctrl+F); rarely changed settings sit under Advanced; each section can be reset, with Undo
 - [x] Accent colours, poster size, ratings on posters, reduce motion
 - [x] Navigation on the left or across the top
 - [~] Open the logs and screenshots folders; clear cache; clear local history (with confirmation)
@@ -138,5 +149,5 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Portable build with Start menu and Desktop shortcuts
 - [x] Installer: per-user Setup.exe (no admin), Start menu and optional desktop shortcut, Apps list uninstaller, WebView2 check, updates in place keeping your data, uninstall asks before removing data (install, upgrade and uninstall checked silently)
 - [ ] Code signing (no SmartScreen warning)
-- [x] Update check at start and in Settings → About; the button opens the download page (unsigned builds)
+- [x] Update check at start and in Settings → About; the button downloads the new Setup straight through the browser, with no web page to click through (unsigned builds)
 - [~] Installing the update from inside the app (signed download, install, reopen): works end to end, but only safe in code-signed builds, so it is a build option that is off for now
