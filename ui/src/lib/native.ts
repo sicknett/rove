@@ -49,9 +49,33 @@ async function readDoc<T>(kind: 'store' | 'secret', name: string): Promise<T | n
     }
   }
   const res = await fetch(`/__api/${kind}/${encodeURIComponent(name)}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`could not read ${name} (${res.status})`);
+  if (res.status === 404) {
+    unreadable.delete(`${kind}/${name}`);
+    return null;
+  }
+  if (!res.ok) {
+    unreadable.add(`${kind}/${name}`);
+    throw new Error(`could not read ${name} (${res.status})`);
+  }
+  unreadable.delete(`${kind}/${name}`);
   return (await res.json()) as T;
+}
+
+/**
+ * Documents that exist but could not be read (locked, disk error). Most stores treat a failed
+ * read as "nothing saved yet" and start empty; saving that would replace the real file, so a
+ * save to one of these waits until the file reads again.
+ */
+const unreadable = new Set<string>();
+
+async function readableAgain(kind: 'store' | 'secret', name: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/__api/${kind}/${encodeURIComponent(name)}`);
+    if (res.ok || res.status === 404) unreadable.delete(`${kind}/${name}`);
+  } catch {
+    /* still unreachable */
+  }
+  return !unreadable.has(`${kind}/${name}`);
 }
 
 let frozen = false;
@@ -71,6 +95,9 @@ async function writeDoc(kind: 'store' | 'secret', name: string, value: unknown):
       /* storage full or blocked: lasts for this run only */
     }
     return;
+  }
+  if (unreadable.has(`${kind}/${name}`) && !(await readableAgain(kind, name))) {
+    throw new Error(`not saving ${name}: the saved copy could not be read, and this would replace it`);
   }
   const res = await fetch(`/__api/${kind}/${encodeURIComponent(name)}`, { method: 'PUT', body });
   if (!res.ok) throw new Error(`could not save ${name} (${res.status})`);

@@ -17,8 +17,9 @@ export function applyPlayerSettings(s: Settings = settingsNow()) {
   mpv.set('sub-border-color', st.outlineColor);
   mpv.set('sub-border-size', st.background === 'box' ? 0 : st.outlineSize);
   mpv.set('sub-shadow-offset', st.background === 'shadow' ? 1.25 : 0);
-  mpv.set('sub-shadow-color', '#99000000');
-  mpv.set('sub-back-color', st.background === 'box' ? '#B3000000' : '#00000000');
+  // mpv 0.40 draws the shadow in the "back" colour too (`sub-shadow-color` is only its old name),
+  // so the one option carries the box or the shadow; clearing it for "shadow" drew no shadow.
+  mpv.set('sub-back-color', st.background === 'box' ? '#B3000000' : st.background === 'shadow' ? '#99000000' : '#00000000');
   mpv.set('sub-border-style', st.background === 'box' ? 'background-box' : 'outline-and-shadow');
   mpv.set('hwdec', s.playback.hwdec);
   mpv.set('volume-max', s.audio.volumeMax);
@@ -111,6 +112,9 @@ export function chooseTracks(tracks: Track[], s: Settings, remembered?: TrackCho
     const lang = normLang(remembered.audioLang);
     const same = audio.filter((t) => normLang(t.lang) === lang);
     a = same.find((t) => remembered.audioTitle && t.title === remembered.audioTitle) ?? same.find((t) => !isCommentary(t)) ?? same[0];
+  } else if (remembered?.audioTitle) {
+    // A track with no language tag is known only by its title.
+    a = audio.find((t) => t.title === remembered.audioTitle);
   }
   if (!a) {
     for (const lang of prefAudio) {
@@ -144,6 +148,12 @@ export function chooseTracks(tracks: Track[], s: Settings, remembered?: TrackCho
     const lang = normLang(remembered.subLang);
     const same = subs.filter((t) => normLang(t.lang) === lang && (remembered.forced ? isForced(t) : !isForced(t)));
     const t = same.find((x) => remembered.subTitle && x.title === remembered.subTitle) ?? same[0];
+    if (t) {
+      out.sid = t.id;
+      return out;
+    }
+  } else if (remembered?.subTitle) {
+    const t = subs.find((x) => x.title === remembered.subTitle);
     if (t) {
       out.sid = t.id;
       return out;

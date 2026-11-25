@@ -16,20 +16,38 @@ export function DataSection() {
   const [withKeys, setWithKeys] = useState(false);
   const [saving, setSaving] = useState(false);
   const file = useRef<HTMLInputElement>(null);
-  const restore = async (f: File) => {
+  // A chosen backup waits here until the user confirms: restoring replaces this PC's setup.
+  const [chosen, setChosen] = useState<ReturnType<typeof readBackup> | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const choose = async (f: File) => {
     try {
-      const summary = await restoreBackup(readBackup(await f.text()));
-      toast.success(`Restored ${summary.addons} addons and ${summary.profiles} profile${summary.profiles === 1 ? '' : 's'}. Reloading…`);
-      window.setTimeout(() => location.reload(), 900);
+      setChosen(readBackup(await f.text()));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'That backup could not be read.');
+      toast.error(e instanceof Error && !(e instanceof SyntaxError) ? e.message : 'That file is not a ROVE backup.');
     }
   };
+  const restore = async () => {
+    if (!chosen || restoring) return;
+    setRestoring(true);
+    try {
+      const summary = await restoreBackup(chosen);
+      toast.success(`Restored ${summary.addons} addon${summary.addons === 1 ? '' : 's'} and ${summary.profiles} profile${summary.profiles === 1 ? '' : 's'}. Reloading…`);
+      window.setTimeout(() => location.reload(), 900);
+    } catch {
+      setRestoring(false);
+      setChosen(null);
+      toast.error('The backup could not be restored. Some of it may have been written: restore it again, or restart ROVE.');
+    }
+  };
+  const chosenDate = chosen && !Number.isNaN(Date.parse(chosen.createdAt)) ? new Date(chosen.createdAt).toLocaleDateString(undefined, { dateStyle: 'medium' }) : null;
   return (
     <>
-      <Group title="Back up and move to another PC" note="A backup holds your addons, profiles, and each profile's settings, Home layout, collections and track choices. Watch history is not in it: PublicMetaDB brings that to every device.">
-        <SettingRow label="Include API keys" hint="Your PublicMetaDB and TMDB keys. Keep a backup with keys private, like a password.">
-          <Switch checked={withKeys} onChange={setWithKeys} label="Include API keys" />
+      <Group
+        title="Back up and move to another PC"
+        note="A backup holds your addons, profiles, and each profile's settings, Home layout, collections and track choices. Addon links are always in it, and they can carry your configuration and its keys, so keep every backup private. Watch history is not in it: your tracker brings that to every device."
+      >
+        <SettingRow label="Include sign-ins and keys" hint="Adds your tracker sign-ins, your media server sign-ins and your TMDB key. Keep that file like a password.">
+          <Switch checked={withKeys} onChange={setWithKeys} label="Include sign-ins and keys" />
         </SettingRow>
         <SettingRow label="Back up" hint="Saves a .json file you can copy to another PC">
           <Button
@@ -54,7 +72,7 @@ export function DataSection() {
           <Button variant="secondary" icon={<Upload size={16} />} onClick={() => file.current?.click()}>
             Restore…
           </Button>
-          <input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => e.target.files?.[0] && void restore(e.target.files[0])} />
+          <input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => (e.target.files?.[0] && void choose(e.target.files[0]), (e.target.value = ''))} />
         </SettingRow>
       </Group>
       <Group title="Storage">
@@ -88,6 +106,30 @@ export function DataSection() {
           </Button>
         </SettingRow>
       </Group>
+      <Dialog
+        open={!!chosen}
+        onClose={() => !restoring && setChosen(null)}
+        title="Restore this backup?"
+        width={460}
+        footer={
+          <>
+            <Button variant="ghost" disabled={restoring} onClick={() => setChosen(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" busy={restoring} onClick={() => void restore()}>
+              Restore
+            </Button>
+          </>
+        }
+      >
+        {chosen && (
+          <p className="dialog__text">
+            The addons, profiles and settings on this PC are replaced with the backup's: {chosen.addons.length} addon{chosen.addons.length === 1 ? '' : 's'} and {chosen.profiles.profiles.length} profile
+            {chosen.profiles.profiles.length === 1 ? '' : 's'}
+            {chosenDate ? `, saved ${chosenDate}` : ''}.{chosen.keys || chosen.servers ? ' Its sign-ins and keys replace the ones here.' : ''} Watch history on this PC is kept. This cannot be undone.
+          </p>
+        )}
+      </Dialog>
       <Dialog
         open={confirm}
         onClose={() => setConfirm(false)}

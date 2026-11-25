@@ -152,6 +152,24 @@ export async function fetchSegments(ctx: SkipContext, chapters: Segment[]): Prom
   return mergeSegments([chapters, a, b, c, d], ctx.duration);
 }
 
+/**
+ * Where an episode's ending begins: the credits marker when there is one near the end, else a
+ * lead time before the end. The next-episode card shows from here, and an episode left past this
+ * point counts as watched.
+ */
+export function endingStart(segments: Segment[], duration: number, leadSec: number): number {
+  const credits = segments.find((s) => s.kind === 'credits' && s.start > duration * 0.6);
+  return credits ? credits.start : duration - leadSec;
+}
+
+/**
+ * Whether a video that stopped at `position` reached its end. mpv reports the end of the data
+ * either way; stopping well short of the length means the stream broke off (a link that expired).
+ */
+export function reachedEnd(position: number, duration: number): boolean {
+  return duration - position <= Math.max(30, duration * 0.02);
+}
+
 export function activeSegment(segments: Segment[], t: number, duration: number): Segment | null {
   return segments.find((s) => t >= s.start && t < (s.end ?? duration) - 0.5) ?? null;
 }

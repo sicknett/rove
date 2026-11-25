@@ -11,13 +11,13 @@ import { useHistory } from '../state/history';
 import { Img } from '../ui/Img';
 import { Button, Dialog, ProgressLine, Sheet } from '../ui/controls';
 import { formatTime } from '../format';
-import { AudioMenu, SpeedMenu, SubtitleMenu, VideoMenu, resetAspect } from './Menus';
+import { AudioMenu, SpeedMenu, SubtitleMenu, VideoMenu } from './Menus';
 import { Scrubber } from './Scrubber';
-import { getPlayerState, onPlayerEvent, usePlayer } from './store';
+import { getPlayerState, knownPosition, patchPlayerState, usePlayer } from './store';
 import { TitleBar } from '../components/TitleBar';
-import { openSwitcher, startStream, stopPlayback, usePlayback, type Session } from './session';
-import { useDeadLinkRecovery, useNextEpisode, useProgressSaving, useSegments, useTrackSetup } from './runtime';
-import { activeSegment, type Segment } from './skips';
+import { cancelFinding, forgetLink, openSwitcher, startStream, stopPlayback, usePlayback, type PlayTarget, type Session } from './session';
+import { markSessionWatched, rememberChoice, useDeadLinkRecovery, useNextEpisode, useProgressSaving, useSegments, useTrackSetup } from './runtime';
+import { activeSegment, endingStart, reachedEnd, type Segment } from './skips';
 import { episodeTarget, playEpisode } from './launch';
 import type { EpisodeRef } from '../library/continue';
 import { toast } from '../ui/toast';
@@ -34,7 +34,11 @@ export function Player() {
   const cacheBuffering = usePlayer((s) => s.cacheBuffering);
   const fullscreen = usePlayer((s) => s.window.fullscreen);
   const error = usePlayer((s) => s.error);
+  const eof = usePlayer((s) => s.eof);
   const audioLost = usePlayer((s) => s.lastAudioTrack !== null && (!s.audioOutput || s.audioOutput === 'null') && !s.loading);
+  const finding = usePlayback((s) => s.finding);
+  // Sources are being found again for this same video (its remembered link had expired).
+  const recovering = !!finding && finding.videoId === session.target.videoId;
   const pip = usePip();
   const [menu, setMenu] = useState<MenuName>(null);
   const [panel, setPanel] = useState<'episodes' | null>(null);
@@ -46,14 +50,24 @@ export function Player() {
   const hovering = useRef(false);
   const clickTimer = useRef<number | undefined>(undefined);
   const lastInput = useRef(Date.now());
+  /** Where a press on the picture began, while it may still become a drag of the mini player. */
+  const dragFrom = useRef<{ x: number; y: number } | null>(null);
+  const dragged = useRef(false);
+  /** The session a next-episode start is under way for, so the countdown, the end of the file and a click do not each start one. */
+  const startingNext = useRef(0);
+  /** The session whose end of file has been dealt with. */
+  const ended = useRef(0);
+  /** How often starting the next episode has come to nothing in a session. */
+  const [nextStall, setNextStall] = useState({ id: 0, n: 0 });
 
   useProgressSaving(session);
   useTrackSetup(session);
   useDeadLinkRecovery(session);
   const segments = useSegments(session);
   const next = useNextEpisode(session);
-
-  useEffect(() => resetAspect(), [session.id]);
+  // The session object is replaced as sources arrive; handlers read the latest without being rebuilt.
+  const live = useRef({ session, segments });
+  live.current = { session, segments };
 
   // Windows media controls: what is playing, and the keys.
   useEffect(() => {
@@ -70,7 +84,7 @@ export function Player() {
   useEffect(() => () => send({ t: 'now-playing', state: 'stopped' }), []);
 
 
-  const shown = controlsVisible || pause || menu !== null || loading || !!error;
+  const shown = controlsVisible || pause || menu !== null || loading || recovering || !!error;
 
   const poke = useCallback(() => {
     lastInput.current = Date.now();
@@ -109,6 +123,7 @@ export function Player() {
     mpv.set('volume', volume);
     if (settingsNow().playback.rememberVolume) localStorage.setItem('rove.volume', String(volume));
     if (getPlayerState().mute && volume > 0) mpv.set('mute', false);
+    return volume;
   }, []);
 
   const exit = useCallback(() => {
@@ -118,12 +133,54 @@ export function Player() {
 
   const playNext = useCallback(
     async (auto: boolean) => {
-      if (!next || !session.meta) return;
-      const unattended = auto && lastInput.current < session.startedAt + 5000 ? session.unattendedCount + 1 : 0;
-      await playEpisode(session.meta, session.target.metaId, next, { unattended, fromStart: false });
+      const { session: sess, segments: segs } = live.current;
+      if (!next || !sess.meta || startingNext.current === sess.id) return;
+      startingNext.current = sess.id;
+      // Moving on during the credits (or once the next-episode card would show) is finishing the
+      // episode, even short of the share of it that counts as watched by itself.
+      const { pos, dur } = knownPosition();
+      if (dur > 0 && pos >= endingStart(segs, dur, settingsNow().playback.nextLeadSec)) markSessionWatched(sess);
+      const unattended = auto && lastInput.current < sess.startedAt + 5000 ? sess.unattendedCount + 1 : 0;
+      try {
+        // The launch shows "finding" in the player at once and gives up if the player is left
+        // (or something else is started) while the episode is being looked up.
+        await playEpisode(sess.meta, sess.target.metaId, next, { unattended, fromStart: false });
+      } catch (e) {
+        console.error(e);
+        toast.error('Could not start the next episode.');
+      } finally {
+        if (startingNext.current === sess.id) startingNext.current = 0;
+        // Still on this episode: the next one did not start by itself (no source fitted and the
+        // list opened, a question is up, or it failed). The card stops counting down for it.
+        if (usePlayback.getState().session?.id === sess.id) setNextStall((v) => ({ id: sess.id, n: v.id === sess.id ? v.n + 1 : 1 }));
+      }
     },
-    [next, session],
+    [next, session.id], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // The end of the file. mpv holds the last frame there (paused), so something has to follow:
+  // the next episode, or back to where the user came from.
+  useEffect(() => {
+    if (!eof || ended.current === session.id) return;
+    const { pos, dur } = knownPosition();
+    // No length yet means the report is left over from the file before.
+    if (!(dur > 0) || getPlayerState().loading) return;
+    ended.current = session.id;
+    if (!reachedEnd(pos, dur)) {
+      // The data ran out well short of the length: the stream broke off. Shown as a failure,
+      // with Retry picking up from here, and the link is not worth reusing.
+      forgetLink(session.target.videoId, session.stream.url);
+      patchPlayerState({ error: 'The stream stopped before the end. Its link may have expired.' });
+      return;
+    }
+    markSessionWatched(session);
+    if (next && session.meta) {
+      // With auto-play off the next-episode card stays up and offers it.
+      if (settingsNow().playback.autoPlayNext) void playNext(true);
+      return;
+    }
+    exit();
+  }, [eof, session.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return subscribe((m) => {
@@ -138,11 +195,12 @@ export function Player() {
 
   const activeSeg = useActiveSegment(segments);
   const skipSegment = useCallback(
-    (seg: Segment) => {
+    // `auto`: skipped by the setting, not by the user, so the next episode counts as unattended.
+    (seg: Segment, auto = false) => {
       const dur = getPlayerState().duration;
       const end = seg.end ?? dur;
       if (seg.kind === 'credits' && next && (seg.end === null || dur - end < 20)) {
-        void playNext(false);
+        void playNext(auto);
         return;
       }
       mpv.command('seek', end.toFixed(2), 'absolute');
@@ -155,11 +213,18 @@ export function Player() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement;
+      // Typing belongs to the field. The volume slider is no such field: it keeps the focus
+      // after a click, and the shortcuts must not die with it.
+      const typing = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && (el as HTMLInputElement).type !== 'range');
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      // A dialog or sheet on top has the keyboard.
+      if (document.querySelector('.overlay')) return;
       const s = getPlayerState();
       const step = settingsNow().playback.seekStepSec;
-      switch (e.key) {
+      // Letters work with Caps Lock on too.
+      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      switch (key) {
         case ' ':
         case 'k':
           e.preventDefault();
@@ -177,19 +242,18 @@ export function Player() {
           break;
         case 'ArrowUp':
           e.preventDefault();
-          setVolume(s.volume + 5);
-          showFlash('forward', `${Math.min(150, Math.round(s.volume + 5))}%`);
+          showFlash('forward', `${setVolume(s.volume + 5)}%`);
           break;
         case 'ArrowDown':
           e.preventDefault();
-          setVolume(s.volume - 5);
-          showFlash('back', `${Math.max(0, Math.round(s.volume - 5))}%`);
+          showFlash('back', `${setVolume(s.volume - 5)}%`);
           break;
         case 'm':
           mpv.set('mute', !s.mute);
           break;
         case 'f':
-          appWindow.fullscreen();
+          // The mini player stays small; full screen is for the full window.
+          if (!pip) appWindow.fullscreen();
           break;
         case 'i':
           setStats((v) => !v);
@@ -215,14 +279,15 @@ export function Player() {
           const idx = subs.findIndex((t) => t.id === s.sid);
           const nextSub = idx + 1 < subs.length ? subs[idx + 1].id : 'no';
           mpv.set('sid', nextSub);
+          // Remembered for the show, like a pick from the menu.
+          rememberChoice(live.current.session, 'sub', nextSub);
           break;
         }
         case 'p':
           setPip(!pip);
           break;
         case 'Escape':
-          if (help) setHelp(false);
-          else if (menu) setMenu(null);
+          if (menu) setMenu(null);
           else if (s.window.fullscreen) appWindow.fullscreen(false);
           else if (pip) setPip(false);
           break;
@@ -237,9 +302,13 @@ export function Player() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [exit, menu, poke, seekBy, togglePause, setVolume, next, playNext, activeSeg, skipSegment, help, pip]);
+  }, [exit, menu, poke, seekBy, togglePause, setVolume, next, playNext, activeSeg, skipSegment, pip]);
 
   const onSurfaceClick = (e: React.MouseEvent) => {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
     if (menu) {
       setMenu(null);
       return;
@@ -247,16 +316,36 @@ export function Player() {
     if (e.detail === 1) clickTimer.current = window.setTimeout(togglePause, 220);
     else {
       window.clearTimeout(clickTimer.current);
-      appWindow.fullscreen();
+      // The mini player has no full screen: a double click brings the full window back.
+      if (pip) setPip(false);
+      else appWindow.fullscreen();
     }
+  };
+
+  // The mini player has no title bar, so dragging the picture moves the window. The move starts
+  // only once the pointer has travelled, which leaves a plain click to pause.
+  const onSurfacePointerDown = (e: React.PointerEvent) => {
+    dragged.current = false;
+    dragFrom.current = pip && e.button === 0 ? { x: e.screenX, y: e.screenY } : null;
+  };
+  const onSurfacePointerMove = (e: React.PointerEvent) => {
+    const from = dragFrom.current;
+    if (!from) return;
+    if (!(e.buttons & 1)) {
+      dragFrom.current = null;
+      return;
+    }
+    if (Math.abs(e.screenX - from.x) + Math.abs(e.screenY - from.y) < 6) return;
+    dragFrom.current = null;
+    dragged.current = true;
+    window.clearTimeout(clickTimer.current);
+    appWindow.drag();
   };
 
   const onWheel = (e: React.WheelEvent) => {
     if ((e.target as HTMLElement).closest('.menu, .sheet')) return;
     const s = getPlayerState();
-    const v = s.volume + (e.deltaY < 0 ? 5 : -5);
-    setVolume(v);
-    showFlash(e.deltaY < 0 ? 'forward' : 'back', `${Math.max(0, Math.min(150, Math.round(v)))}%`);
+    showFlash(e.deltaY < 0 ? 'forward' : 'back', `${setVolume(s.volume + (e.deltaY < 0 ? 5 : -5))}%`);
     poke();
   };
 
@@ -265,7 +354,7 @@ export function Player() {
 
   return (
     <div className={`player${shown ? '' : ' player--idle'}${pip ? ' player--pip' : ''}`} onPointerMove={poke} onPointerDown={poke} onWheel={onWheel}>
-      <div className="player__surface" onClick={onSurfaceClick} />
+      <div className="player__surface" onClick={onSurfaceClick} onPointerDown={onSurfacePointerDown} onPointerMove={onSurfacePointerMove} />
 
       <div className="player__scrim player__scrim--top" />
       <div className="player__scrim player__scrim--bottom" />
@@ -282,10 +371,10 @@ export function Player() {
         </div>
       </div>
 
-      {(loading || buffering) && !error && (
+      {(recovering || ((loading || buffering) && !error)) && (
         <div className="player__center" aria-live="polite">
           <div className="spinner" />
-          {!loading && cacheBuffering < 100 && <span className="player__buffer-pct">{Math.round(cacheBuffering)}%</span>}
+          {!loading && !recovering && cacheBuffering < 100 && <span className="player__buffer-pct">{Math.round(cacheBuffering)}%</span>}
         </div>
       )}
 
@@ -302,7 +391,7 @@ export function Player() {
         </div>
       )}
 
-      {error && <ErrorPanel session={session} error={error} onExit={exit} />}
+      {error && !recovering && <ErrorPanel session={session} error={error} onExit={exit} />}
 
       {audioLost && !error && (
         <div className="toast" role="status">
@@ -314,7 +403,9 @@ export function Player() {
 
       {activeSeg && !error && <SkipButton seg={activeSeg} next={!!next} onSkip={() => skipSegment(activeSeg)} raised={shown} />}
 
-      {next && !error && <UpNext session={session} next={next} segments={segments} onPlay={playNext} />}
+      {next && !error && <UpNext session={session} next={next} segments={segments} onPlay={playNext} stall={nextStall.id === session.id ? nextStall.n : 0} />}
+
+      {finding && !recovering && <FindingCard target={finding} />}
 
       <div className="player__bottom">
         <div className="player__controls" onPointerEnter={() => (hovering.current = true)} onPointerLeave={() => (hovering.current = false)}>
@@ -397,7 +488,7 @@ function useActiveSegment(segments: Segment[]): Segment | null {
   return active;
 }
 
-function useAutoSkip(seg: Segment | null, skip: (s: Segment) => void) {
+function useAutoSkip(seg: Segment | null, skip: (s: Segment, auto?: boolean) => void) {
   const done = useRef(new Set<Segment>());
   useEffect(() => {
     if (!seg || done.current.has(seg)) return;
@@ -406,7 +497,7 @@ function useAutoSkip(seg: Segment | null, skip: (s: Segment) => void) {
     if (mode !== 'auto') return;
     done.current.add(seg);
     toast.info(`Skipped the ${seg.kind}`);
-    skip(seg);
+    skip(seg, true);
   }, [seg, skip]);
 }
 
@@ -423,74 +514,89 @@ function SkipButton({ seg, next, onSkip, raised }: { seg: Segment; next: boolean
   );
 }
 
-function UpNext({ session, next, segments, onPlay }: { session: Session; next: EpisodeRef; segments: Segment[]; onPlay: (auto: boolean) => Promise<void> }) {
+function UpNext({ session, next, segments, onPlay, stall }: { session: Session; next: EpisodeRef; segments: Segment[]; onPlay: (auto: boolean) => Promise<void>; stall: number }) {
   const p = useSettings((s) => s.settings.playback);
+  // While sources for the next episode are being found, the finding card stands in for this one.
+  const finding = usePlayback((s) => !!s.finding);
   const [phase, setPhase] = useState<'hidden' | 'shown' | 'dismissed'>('hidden');
   const [left, setLeft] = useState(p.nextCountdownSec);
+  // Starting the next episode came to nothing (the source list opened, or it failed): from then
+  // on the card only offers it, or it would count down into the same result again and again.
+  const [manual, setManual] = useState(false);
   const prefetched = useRef(false);
   const started = useRef(false);
+  const sessionId = session.id;
+  const meta = session.meta;
+  const metaId = session.target.metaId;
+  const auto = p.autoPlayNext && !manual;
 
   useEffect(() => {
     setPhase('hidden');
+    setManual(false);
     prefetched.current = false;
     started.current = false;
-  }, [session.id]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (stall) setManual(true);
+  }, [stall]);
 
   // When to show: the credits marker if there is one near the end, else a lead time before the end.
   useEffect(() => {
     const id = window.setInterval(() => {
       const s = getPlayerState();
       if (!(s.duration > 0) || s.loading) return;
-      const credits = segments.find((x) => x.kind === 'credits' && x.start > s.duration * 0.6);
-      const at = credits ? credits.start : s.duration - p.nextLeadSec;
-      if (!prefetched.current && s.timePos > s.duration * 0.8) {
+      const at = endingStart(segments, s.duration, p.nextLeadSec);
+      // Ask the addons about the next episode shortly before the card shows: their answers are
+      // only kept for a few minutes, so asking earlier in a long episode would be wasted.
+      if (!prefetched.current && meta && s.timePos >= at - 60) {
         prefetched.current = true;
         void (async () => {
-          const target = await episodeTarget(session.meta!, session.target.metaId, next);
-          await fetchStreams('series', target.videoId, () => undefined).catch(() => undefined);
-        })();
+          const target = await episodeTarget(meta, metaId, next);
+          await fetchStreams('series', target.videoId, () => undefined);
+        })().catch(() => undefined);
       }
       if (s.timePos >= at && phase === 'hidden') {
         setPhase('shown');
         setLeft(p.nextCountdownSec);
       }
-      if (s.timePos < at - 5 && phase === 'dismissed') setPhase('hidden');
+      // Seeking back out of the ending takes the card away; next time it starts over.
+      if (s.timePos < at - 5 && phase !== 'hidden') {
+        setPhase('hidden');
+        setManual(false);
+        started.current = false;
+      }
+      // At the very end nothing else moves on: if the card only offers, it has to be there.
+      if (s.eof && phase === 'dismissed' && !auto) setPhase('shown');
     }, 400);
     return () => window.clearInterval(id);
-  }, [segments, p.nextLeadSec, p.nextCountdownSec, phase, session, next]);
+  }, [segments, p.nextLeadSec, p.nextCountdownSec, auto, phase, meta, metaId, next]);
 
-  // Countdown and end of file.
+  // Countdown. Reaching the end of the file starts the next episode too (see the player).
   useEffect(() => {
-    if (phase !== 'shown' || !p.autoPlayNext) return;
+    if (phase !== 'shown' || !auto || finding) return;
     const id = window.setInterval(() => {
-      if (getPlayerState().pause) return;
-      setLeft((l) => {
-        if (l <= 1 && !started.current) {
-          started.current = true;
-          void onPlay(true);
-        }
-        return l - 1;
-      });
+      const s = getPlayerState();
+      // A paused video holds the countdown, except at the end, where mpv pauses by itself.
+      if (s.pause && !s.eof) return;
+      setLeft((l) => l - 1);
     }, 1000);
     return () => window.clearInterval(id);
-  }, [phase, p.autoPlayNext, onPlay]);
+  }, [phase, auto, finding]);
 
   useEffect(() => {
-    return onPlayerEvent((e) => {
-      if (e.name === 'end-file' && e.reason === 'eof' && p.autoPlayNext && !started.current) {
-        started.current = true;
-        void onPlay(true);
-      }
-    });
-  }, [onPlay, p.autoPlayNext]);
+    if (phase !== 'shown' || !auto || finding || left > 0 || started.current) return;
+    started.current = true;
+    void onPlay(true);
+  }, [left, phase, auto, finding, onPlay]);
 
-  if (phase !== 'shown') return null;
+  if (phase !== 'shown' || finding) return null;
   const total = p.nextCountdownSec;
   return (
     <div className="upnext" role="dialog" aria-label="Next episode">
       <div className="upnext__thumb">
         <Img src={next.thumbnail ?? session.target.background} alt="" className="upnext__img" />
-        {p.autoPlayNext && (
+        {auto && (
           <svg className="upnext__ring" viewBox="0 0 36 36" aria-hidden>
             <circle cx="18" cy="18" r="16" className="upnext__ring-bg" />
             <circle cx="18" cy="18" r="16" className="upnext__ring-fg" style={{ strokeDashoffset: `${100 - (Math.max(0, left) / total) * 100}` }} />
@@ -498,7 +604,7 @@ function UpNext({ session, next, segments, onPlay }: { session: Session; next: E
         )}
       </div>
       <div className="upnext__text">
-        <span className="upnext__eyebrow">{p.autoPlayNext ? `Next episode in ${Math.max(0, left)}` : 'Next episode'}</span>
+        <span className="upnext__eyebrow">{auto ? `Next episode in ${Math.max(0, left)}` : 'Next episode'}</span>
         <span className="upnext__title">
           S{next.season} E{next.episode}
           {next.title ? ` · ${next.title}` : ''}
@@ -509,6 +615,31 @@ function UpNext({ session, next, segments, onPlay }: { session: Session; next: E
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setPhase('dismissed')}>
             Keep watching
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Finding the best source…" for a video that is about to replace the one playing (the next
+ * episode, one picked from the list). A card, so the current video stays in view until then.
+ */
+function FindingCard({ target }: { target: PlayTarget }) {
+  return (
+    <div className="upnext" role="status" aria-live="polite">
+      <div className="upnext__thumb">
+        <Img src={target.still ?? target.background} alt="" className="upnext__img" />
+      </div>
+      <div className="upnext__text">
+        <span className="upnext__eyebrow">Finding the best source…</span>
+        <span className="upnext__title">
+          {target.season !== undefined ? `S${target.season} E${target.episode}${target.episodeTitle ? ` · ${target.episodeTitle}` : ''}` : target.name}
+        </span>
+        <div className="upnext__actions">
+          <Button variant="ghost" size="sm" onClick={cancelFinding}>
+            Cancel
           </Button>
         </div>
       </div>
@@ -553,19 +684,21 @@ function StillWatching({ session }: { session: Session }) {
 }
 
 function EpisodesPanel({ session, onClose }: { session: Session; onClose: () => void }) {
-  const eps = useMemo(() => episodesOf(session.meta).filter((e) => e.season > 0), [session.meta]);
-  const seasons = [...new Set(eps.map((e) => e.season))].sort((a, b) => a - b);
+  const eps = useMemo(() => episodesOf(session.meta), [session.meta]);
+  // Specials (season 0) are listed too, after the numbered seasons.
+  const seasons = [...new Set(eps.map((e) => e.season))].sort((a, b) => (a || Infinity) - (b || Infinity));
+  const seasonName = (s: number) => (s === 0 ? 'Specials' : `Season ${s}`);
   const [season, setSeason] = useState(session.target.season ?? seasons[0]);
   const progress = useHistory((s) => s.progress);
   const watched = useHistory((s) => s.watched);
   const list = eps.filter((e) => e.season === season).sort((a, b) => a.episode - b.episode);
   const now = Date.now();
   return (
-    <Sheet open onClose={onClose} title={session.target.name} subtitle={`Season ${season}`} width={520}>
+    <Sheet open onClose={onClose} title={session.target.name} subtitle={seasonName(season)} width={520}>
       <div className="chips chips--scroll">
         {seasons.map((s) => (
           <button key={s} className={`chip chip--sm ${s === season ? 'is-on' : ''}`} onClick={() => setSeason(s)}>
-            Season {s}
+            {seasonName(s)}
           </button>
         ))}
       </div>
@@ -614,7 +747,8 @@ function ErrorPanel({ session, error, onExit }: { session: Session; error: strin
       <p className="player__error-title">This source would not play</p>
       <p className="player__error-detail">{error}</p>
       <div className="player__error-actions">
-        <Button variant="primary" onClick={() => startStream(session.target, session.stream, getPlayerState().timePos || 0, session.meta, session.streams, 0)}>
+        {/* From where the video last really was: the live position reads 0 once a stream has failed. */}
+        <Button variant="primary" onClick={() => startStream(session.target, session.stream, knownPosition().pos, session.meta, session.streams, 0)}>
           Retry
         </Button>
         <Button variant="secondary" icon={<ListVideo size={16} />} onClick={openSwitcher}>
@@ -658,6 +792,8 @@ function VolumeControl({ onChange }: { onChange: (v: number) => void }) {
         step={1}
         value={Math.min(100, level)}
         onChange={(e) => onChange(Number(e.target.value))}
+        // Let go of the keyboard focus after a drag, so the arrow keys go back to the player.
+        onPointerUp={(e) => e.currentTarget.blur()}
         style={{ ['--fill' as string]: `${Math.min(100, level)}%` }}
         aria-label="Volume"
       />
@@ -708,7 +844,7 @@ const SHORTCUTS: [string, string][] = [
   [', / .', 'Frame back / forward (paused)'],
   ['I', 'Playback info'],
   ['P', 'Picture in picture'],
-  ['Esc', 'Leave full screen / close'],
+  ['Esc', 'Close a menu, leave full screen'],
   ['Backspace', 'Stop and go back'],
 ];
 

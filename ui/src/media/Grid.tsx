@@ -24,11 +24,28 @@ interface Props {
   loading?: boolean;
   hasMore?: boolean;
   loadMore?: () => void;
+  /** The last `loadMore` failed: stop asking on scroll and offer "Try again" under the grid. */
+  loadFailed?: boolean;
   progressOf?: (m: MetaPreview) => number | undefined;
 }
 
+/**
+ * A grid's paging props from an infinite query. A page that fails keeps the pages already
+ * loaded and waits for "Try again", instead of being asked for again on every render.
+ */
+export function paging(q: { isLoading: boolean; isFetchingNextPage: boolean; hasNextPage: boolean; isFetchNextPageError: boolean; fetchNextPage: () => unknown }) {
+  return {
+    loading: q.isLoading || q.isFetchingNextPage,
+    hasMore: q.hasNextPage,
+    loadFailed: q.isFetchNextPageError && !q.isFetchingNextPage,
+    loadMore: () => {
+      if (!q.isFetchingNextPage) void q.fetchNextPage();
+    },
+  };
+}
+
 /** A poster grid that only renders the rows on screen, loading more near the end. */
-export function PosterGrid({ items, loading, hasMore, loadMore, progressOf }: Props) {
+export function PosterGrid({ items, loading, hasMore, loadMore, loadFailed, progressOf }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const size = useSettings((s) => s.settings.appearance.cardSize);
   const [width, setWidth] = useState(0);
@@ -65,39 +82,49 @@ export function PosterGrid({ items, loading, hasMore, loadMore, progressOf }: Pr
   const visible = virtual.getVirtualItems();
   const lastRow = visible[visible.length - 1]?.index ?? 0;
   useEffect(() => {
-    if (hasMore && loadMore && lastRow >= rows - 3) loadMore();
-  }, [lastRow, rows, hasMore, loadMore]);
+    if (hasMore && loadMore && !loadFailed && lastRow >= rows - 3) loadMore();
+  }, [lastRow, rows, hasMore, loadMore, loadFailed]);
 
   return (
-    <div ref={ref} className="grid" style={{ height: virtual.getTotalSize(), ['--card-w' as string]: `${cardWidth}px` }}>
-      {scrollEl &&
-        visible.map((row) => (
-          <div
-            key={row.key}
-            className="grid__row"
-            style={{ transform: `translateY(${row.start - virtual.options.scrollMargin}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, columnGap: GAP }}
-          >
-            {Array.from({ length: columns }, (_, c) => {
-              const i = row.index * columns + c;
-              if (i >= total) return <div key={c} />;
-              const m = items[i];
-              if (!m)
+    <>
+      <div ref={ref} className="grid" style={{ height: virtual.getTotalSize(), ['--card-w' as string]: `${cardWidth}px` }}>
+        {scrollEl &&
+          visible.map((row) => (
+            <div
+              key={row.key}
+              className="grid__row"
+              style={{ transform: `translateY(${row.start - virtual.options.scrollMargin}px)`, gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, columnGap: GAP }}
+            >
+              {Array.from({ length: columns }, (_, c) => {
+                const i = row.index * columns + c;
+                if (i >= total) return <div key={c} />;
+                const m = items[i];
+                if (!m)
+                  return (
+                    <div key={c} className="card card--poster">
+                      <Skeleton className="card__frame card__frame--skeleton" />
+                      <Skeleton className="card__caption-skeleton" />
+                    </div>
+                  );
                 return (
-                  <div key={c} className="card card--poster">
-                    <Skeleton className="card__frame card__frame--skeleton" />
-                    <Skeleton className="card__caption-skeleton" />
-                  </div>
+                  <PosterCard
+                    key={m.id}
+                    title={{ metaId: m.id, type: asMediaType(m.type), name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo, rating: m.imdbRating }}
+                    progress={progressOf?.(m)}
+                  />
                 );
-              return (
-                <PosterCard
-                  key={m.id}
-                  title={{ metaId: m.id, type: asMediaType(m.type), name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo, rating: m.imdbRating }}
-                  progress={progressOf?.(m)}
-                />
-              );
-            })}
-          </div>
-        ))}
-    </div>
+              })}
+            </div>
+          ))}
+      </div>
+      {loadFailed && loadMore && (
+        <p className="load-more">
+          The rest did not load.
+          <button className="row__more" onClick={loadMore}>
+            Try again
+          </button>
+        </p>
+      )}
+    </>
   );
 }

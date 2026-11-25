@@ -1,7 +1,8 @@
 // Talking to installed addons: which addon answers which request, and the requests themselves.
 
-import { getJson } from '../lib/http';
-import { idMatchesPrefixes } from './ids';
+import { getJson, HttpError } from '../lib/http';
+import { alternateId } from '../tracking/idmap';
+import { idMatchesPrefixes, isImdbId, parseId, tmdbTitleNumber } from './ids';
 import { addonBase, useAddons } from './store';
 import { activeProfile } from '../state/profiles';
 import type { InstalledAddon, Manifest, ManifestCatalog, ManifestExtra, Meta, MetaPreview, SourcedStream, Stream, SubtitleRef } from './types';
@@ -81,10 +82,26 @@ export function genreOptions(catalog: ManifestCatalog): string[] {
   return catalogExtras(catalog).find((e) => e.name === 'genre')?.options ?? catalog.genres ?? [];
 }
 
+/**
+ * Whether this addon's catalogs may be shown at all: it is switched on, its catalogs are not
+ * switched off, and the profile may use it (Kids). Everything that lists or fetches catalogs asks
+ * here: Home, the banner, Discover, Search, "See all" and collection folders.
+ */
+export function canBrowse(addon: InstalledAddon): boolean {
+  return addon.enabled && provides(addon, 'catalog') && allowedForProfile(addon);
+}
+
+/** Live channels: ROVE has no page or player for them, so their catalogs and items are left out. */
+const LIVE_TYPES = new Set(['tv', 'channel', 'events']);
+
+export function canOpenType(type: string | undefined): boolean {
+  return !type || !LIVE_TYPES.has(type);
+}
+
 /** Catalogs that can sit on Home: no required extras, and not hidden by the addon. */
 export function homeCatalogs(addon: InstalledAddon): ManifestCatalog[] {
-  if (!provides(addon, 'catalog') || !allowedForProfile(addon)) return [];
-  return addon.manifest.catalogs.filter((c) => catalogNeeds(c).length === 0 && c.showInHome !== false);
+  if (!canBrowse(addon)) return [];
+  return addon.manifest.catalogs.filter((c) => catalogNeeds(c).length === 0 && c.showInHome !== false && canOpenType(c.type));
 }
 
 /** The stable key a catalog row uses for layout. */
@@ -101,9 +118,10 @@ export async function fetchCatalog(
   if (isServerAddon(addon)) return serverCatalog(addon, catalog.id, extra);
   const url = resourceUrl(addon, 'catalog', catalog.type, catalog.id, extra);
   const res = await getJson<{ metas?: MetaPreview[] }>(url, { ttlMs: 10 * 60 * 1000, timeoutMs: 25000, signal });
-  return (res?.metas ?? []).filter((m) => m && m.id && m.name);
+  return (res?.metas ?? []).filter((m) => m && m.id && m.name && canOpenType(m.type));
 }
 
+/** The installed addon (or media server) with this id, whether or not it is in use. */
 export function findAddon(addonId: string): InstalledAddon | undefined {
   if (addonId.startsWith('server:')) {
     const s = useServers.getState().servers.find((x) => `server:${x.id}` === addonId);
@@ -112,21 +130,60 @@ export function findAddon(addonId: string): InstalledAddon | undefined {
   return useAddons.getState().addons.find((a) => a.manifest.id === addonId);
 }
 
+/** The addon (or media server) to fetch a catalog from: `findAddon`, when `canBrowse` allows it. */
+export function catalogAddon(addonId: string): InstalledAddon | undefined {
+  const addon = findAddon(addonId);
+  return addon && canBrowse(addon) ? addon : undefined;
+}
+
 // ---------- Meta ----------
 
-/** The first metadata addon (in the user's order) that knows this title. */
+/**
+ * The other id family (`tmdb:…` for an IMDb id and the reverse) for the same title or video, when
+ * some addon would take it for this resource. Null when none would, or the title does not map.
+ */
+async function otherFamilyId(resource: Resource, type: string, id: string): Promise<string | null> {
+  const base = parseId(id).base;
+  const probe = tmdbTitleNumber(base) !== null ? 'tt0' : isImdbId(base) ? 'tmdb:0' : null;
+  // Asked only when it can help: the lookup may need the network. Media servers take IMDb ids.
+  const takers = addonsFor(resource, type, probe ?? '').length + (resource === 'stream' && probe ? serversFor(probe).length : 0);
+  if (!probe || takers === 0) return null;
+  return alternateId(id, type === 'movie' ? 'movie' : 'series').catch(() => null);
+}
+
+/**
+ * The first metadata addon (in the user's order) that knows this title. History may hold a title
+ * under a `tmdb:` id while the installed addons take only IMDb ids (or the reverse): when no addon
+ * has it under the id given, it is asked for under the other one. The metadata then carries that
+ * addon's ids; callers keep using their own id for history.
+ *
+ * Null means no addon has the title. When none has it and at least one did not answer, that
+ * error is thrown instead: a failed request must not be remembered as "no such title".
+ */
 export async function fetchMeta(type: string, id: string, signal?: AbortSignal): Promise<Meta | null> {
   // Titles only a media server has come from that server.
   if (id.startsWith('srv:')) return serverMeta(id);
-  const candidates = addonsFor('meta', type, id);
-  for (const addon of candidates) {
-    try {
-      const res = await getJson<{ meta?: Meta }>(resourceUrl(addon, 'meta', type, id), { ttlMs: 6 * 3600 * 1000, timeoutMs: 20000, signal });
-      if (res?.meta && res.meta.id) return { ...res.meta, type: res.meta.type || type };
-    } catch (e) {
-      if (signal?.aborted) throw e;
+  let failure: unknown;
+  const ask = async (asId: string): Promise<Meta | null> => {
+    for (const addon of addonsFor('meta', type, asId)) {
+      try {
+        const res = await getJson<{ meta?: Meta }>(resourceUrl(addon, 'meta', type, asId), { ttlMs: 6 * 3600 * 1000, timeoutMs: 20000, signal });
+        if (res?.meta && res.meta.id) return { ...res.meta, type: res.meta.type || type };
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        // An addon answers 404 for a title it does not have: that is an answer, not a failure.
+        if (!(e instanceof HttpError && e.status === 404)) failure ??= e;
+      }
     }
-  }
+    return null;
+  };
+  const found = await ask(id);
+  if (found) return found;
+  const other = await otherFamilyId('meta', type, id);
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const again = other ? await ask(other) : null;
+  if (again) return again;
+  if (failure) throw failure;
   return null;
 }
 
@@ -139,9 +196,20 @@ export async function fetchStreams(
   onAddon: (addon: InstalledAddon, streams: SourcedStream[] | null, error?: unknown) => void,
   signal?: AbortSignal,
 ): Promise<SourcedStream[]> {
-  const candidates = id.startsWith('srv:') ? [] : addonsFor('stream', type, id);
+  let candidates = id.startsWith('srv:') ? [] : addonsFor('stream', type, id);
   const all: SourcedStream[] = [];
-  const servers = type === 'movie' || type === 'series' ? serversFor(id) : [];
+  let servers = type === 'movie' || type === 'series' ? serversFor(id) : [];
+  // Nothing takes this id as it is (a `tmdb:` id with addons that want IMDb, or the reverse): ask
+  // for the same video under its other id. Play buttons have normally done this already
+  // (player/launch.ts streamableVideoId), since the session counts the takers before it searches.
+  if (!candidates.length && !servers.length && !id.startsWith('srv:') && (type === 'movie' || type === 'series')) {
+    const other = await otherFamilyId('stream', type, id);
+    if (other) {
+      id = other;
+      candidates = addonsFor('stream', type, other);
+      servers = serversFor(other);
+    }
+  }
   await Promise.all([
     ...servers.map(async (server) => {
       try {

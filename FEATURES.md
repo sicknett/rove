@@ -35,13 +35,14 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 
 ## 3. Home
 - [x] Featured banner: rotating titles with backdrop, logo art, rating, year, genres, overview, Play, Details, Watchlist
-- [~] Muted trailers in the banner after a few seconds (needs a TMDB key)
+- [~] Muted trailers in the banner while the pointer rests on it (needs a TMDB key)
 - [x] Continue Watching: resume points plus the next aired episode, newest first, wide cards with logo art
 - [~] Remove from Continue Watching (with undo); mark watched from the card menu
 - [x] A row per catalog, loaded as it scrolls into view, paging further on scroll
 - [~] Collections as rows of folder tiles, opening to tabs or rows of sources (addon or TMDB; TMDB media types read in any case)
 - [x] When the metadata addon keeps its catalogs off Home (collection-based setups), Home says why and offers Import collection and Discover
-- [x] Home layout editor: turn rows on or off, rename, reorder, choose banner sources, reset
+- [x] Home layout editor: turn rows on or off, rename, reorder, choose banner sources, edit a collection's folders, reset
+- [x] Row menu on Home (⋯ or right-click the header): move up or down, hide, edit folders
 - [x] Card hover lift and art; keyboard focus rings; right-click menus
 - [x] "See all" opens the full catalog
 
@@ -58,7 +59,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Mark an episode, everything up to an episode, a season or the whole show watched or unwatched
 - [~] Cast with photos, More like this, director and writer (needs a TMDB key)
 - [~] Unaired episodes show their air date and do not play
-- [x] `tmdb:` ids switch to the IMDb id so history lines up with PublicMetaDB
+- [x] One id per title: history, watchlist and cards use the IMDb id when it is known; entries stored under `tmdb:` ids are moved over (checked on a copy of a real synced history)
 
 ## 6. Sources
 - [~] Every stream addon asked at once; results appear as they arrive, each addon's own order kept
@@ -71,7 +72,7 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Clear message and a way to Settings when no stream addon is installed
 
 ## 7. Player
-- [x] mpv under a transparent page: Direct3D 11, gpu-next, hardware decoding
+- [x] mpv under a transparent page: Direct3D 11, gpu-next, hardware decoding (picture checked on screen in windowed, maximized and full screen)
 - [x] Seek bar with buffered range, chapter ticks and names, skip-segment marks, hover time
 - [x] Auto-hiding controls and cursor; click to pause, double-click for fullscreen
 - [x] Audio and subtitle menus with language names, codec and channels; subtitle timing and size
@@ -128,4 +129,6 @@ Screenshots: [`docs/screenshots`](docs/screenshots).
 - [x] Recent screens stay loaded: going back is instant and keeps scroll position
 - [x] Log file with playback events and mpv errors, never addon links or keys
 - [x] Portable build with Start menu and Desktop shortcuts
-- [ ] Installer and automatic updates
+- [x] Installer: per-user Setup.exe (no admin), Start menu and optional desktop shortcut, Apps list uninstaller, WebView2 check, updates in place keeping your data, uninstall asks before removing data (install, upgrade and uninstall checked silently)
+- [ ] Code signing (no SmartScreen warning)
+- [ ] Automatic updates

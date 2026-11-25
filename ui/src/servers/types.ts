@@ -22,6 +22,11 @@ export interface MediaServer {
   userName?: string;
   /** Plex: the server's machine identifier. */
   machineId?: string;
+  /**
+   * Plex: every address the server was listed under when it was added (this network, remote,
+   * relay). `url` is the one that answered; the others are tried when it stops answering.
+   */
+  connections?: { uri: string; local: boolean; relay: boolean }[];
   /** Movie and show libraries, refreshed when ROVE starts. */
   libraries?: ServerLibrary[];
   enabled: boolean;

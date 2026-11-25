@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Compass, FolderOpen, Pencil, Puzzle, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Compass, EyeOff, FolderOpen, FolderPen, Pencil, Puzzle, SlidersHorizontal, Trash2, Upload } from 'lucide-react';
 import { openContextMenu } from '../../ui/contextmenu';
 import { toast } from '../../ui/toast';
 import { catalogKey, catalogNeeds, homeCatalogs } from '../../addons/client';
-import { useAddons } from '../../addons/store';
+import { ADDONS_UNREADABLE, useAddons } from '../../addons/store';
 import type { InstalledAddon, ManifestCatalog, MetaPreview } from '../../addons/types';
 import { asMediaType, flatItems, useCardArt, useCatalog, useContinueWatching } from '../../data/hooks';
-import { Row, useNearViewport } from '../../media/Row';
+import { Row, RowRetry, useNearViewport } from '../../media/Row';
 import { PosterCard, WideCard } from '../../media/cards';
 import { navigate } from '../../nav/router';
 import { CONTINUE_KEY, useHomeLayout, type RowPref } from '../../state/homeLayout';
-import { folderSources, parseCollections, useCollections, type Collection, type CollectionSource } from '../../state/collections';
-import { fetchSourcePage, sourceKey } from '../../data/sources';
+import { folderSources, parseCollections, useCollections, type Collection, type CollectionFolder, type CollectionSource } from '../../state/collections';
+import { fetchSourcePage, sourceBlocker, sourceKey } from '../../data/sources';
 import { useSettings } from '../../state/settings';
-import { Button, Empty } from '../../ui/controls';
+import { Button, Empty, type MenuItem } from '../../ui/controls';
 import { Img } from '../../ui/Img';
 import { playContinue } from '../../player/launch';
 import { Hero } from './Hero';
@@ -64,36 +64,82 @@ function useRowDefs() {
     return defs;
   }, [addons, collections]);
 
+  // Also when the layout itself changes: after "Reset layout" every row is missing from it, and
+  // this puts them back. With nothing missing it does nothing.
   useEffect(() => {
-    if (useHomeLayout.getState().loaded) ensure(available.map((d) => d.key));
-  }, [available, ensure]);
+    if (useHomeLayout.getState().loaded)
+      ensure(
+        available.map((d) => d.key),
+        available.filter((d) => d.kind === 'collection' && d.collection.pinToTop).map((d) => d.key),
+      );
+  }, [available, ensure, prefs]);
 
   return useMemo(() => {
     const prefOf = new Map(prefs.map((p) => [p.key, p]));
     const rows = available
       .map((d) => ({ def: d, pref: prefOf.get(d.key) }))
       .filter((x): x is { def: RowDef; pref: RowPref } => !!x.pref && x.pref.enabled)
-      .sort((a, b) => {
-        const pinA = a.def.kind === 'collection' && a.def.collection.pinToTop ? 0 : 1;
-        const pinB = b.def.kind === 'collection' && b.def.collection.pinToTop ? 0 : 1;
-        return pinA - pinB || a.pref.order - b.pref.order;
-      })
+      // Exactly the order Settings → Home shows. Pinned collections are placed at the top when
+      // they are added (see ensure), not forced above everything, or they bury Continue Watching.
+      .sort((a, b) => a.pref.order - b.pref.order)
       .map(({ def, pref }) => ({ ...def, title: pref.customTitle || def.title, hero: !!pref.hero }));
     return rows;
   }, [available, prefs]);
 }
 
+type RowMenu = (MenuItem | 'divider')[];
+
+/**
+ * Move, hide and edit, straight from a Home row (the same changes Settings → Home layout makes).
+ * `shown` is the rows that draw something right now, top to bottom: a row that is switched on but
+ * empty (Continue Watching with nothing to continue, a catalog with no titles) is not a neighbour,
+ * or moving past it would look like nothing happened.
+ */
+function rowMenu(row: RowDef, shown: string[]): RowMenu {
+  const layout = useHomeLayout.getState();
+  // Every row the layout knows, shown or hidden, in order: a move lands next to the neighbour on Home.
+  const all = [...layout.items].sort((a, b) => a.order - b.order).map((i) => i.key);
+  const at = shown.indexOf(row.key);
+  const moveNextTo = (neighbour: string | undefined) => neighbour && layout.moveRow(row.key, all.indexOf(neighbour), all);
+  const items: RowMenu = [
+    { label: 'Move up', icon: <ArrowUp size={16} />, disabled: at <= 0, onSelect: () => moveNextTo(shown[at - 1]) },
+    { label: 'Move down', icon: <ArrowDown size={16} />, disabled: at < 0 || at >= shown.length - 1, onSelect: () => moveNextTo(shown[at + 1]) },
+    'divider',
+  ];
+  if (row.kind === 'collection') items.push({ label: 'Edit folders', icon: <FolderPen size={16} />, onSelect: () => navigate({ name: 'collection-edit', id: row.collection.id }) });
+  items.push(
+    {
+      label: 'Hide from Home',
+      icon: <EyeOff size={16} />,
+      onSelect: () => {
+        layout.setRow(row.key, { enabled: false });
+        toast.info(`${row.title} hidden`, { label: 'Undo', run: () => useHomeLayout.getState().setRow(row.key, { enabled: true }) });
+      },
+    },
+    { label: 'Home layout…', icon: <SlidersHorizontal size={16} />, onSelect: () => navigate({ name: 'settings', section: 'home' }) },
+  );
+  return items;
+}
+
 export function Home() {
   const loaded = useAddons((s) => s.loaded);
+  const addonsUnreadable = useAddons((s) => s.loadFailed);
   const addonCount = useAddons((s) => s.addons.length);
   const heroOn = useHomeLayout((s) => s.heroEnabled);
   const heroSetting = useSettings((s) => s.settings.appearance.heroEnabled);
   const rows = useRowDefs();
+  const rowsEl = useRef<HTMLDivElement>(null);
+  // Read from the page when a row's menu opens: only the rows themselves know whether they have
+  // anything to show.
+  const drawnRows = () => [...(rowsEl.current?.querySelectorAll<HTMLElement>('[data-row]') ?? [])].filter((el) => el.querySelector('.row')).map((el) => el.dataset.row!);
   const allAddons = useAddons((s) => s.addons);
   const collectionCount = useCollections((s) => s.collections.length);
+  const anyRowOff = useHomeLayout((s) => s.items.some((i) => !i.enabled && i.key !== CONTINUE_KEY));
+  // Rows besides Continue Watching. With none, Home says how to get some; with any, it is a Home.
+  const hasRows = rows.some((r) => r.kind !== 'continue');
   // Catalogs the addon itself keeps off Home (for collections, or needing a genre): offer a way in.
   const keptOff = allAddons.some((a) => a.enabled && a.manifest.catalogs.some((c) => c.showInHome === false || catalogNeeds(c).some((n) => n !== 'search')));
-  const showBuildHome = collectionCount === 0 && (keptOff || !rows.some((r) => r.kind !== 'continue'));
+  const showBuildHome = !hasRows && !addonsUnreadable && collectionCount === 0;
 
   // The banner takes titles from rows marked for it, else the first catalog row, else the first
   // folders of the first collection (collection-based setups have no catalog rows).
@@ -109,7 +155,7 @@ export function Home() {
     const first = collections[0];
     return (first?.folders ?? [])
       .slice(0, 3)
-      .map((f) => folderSources(f).find((src) => (src.provider ?? 'addon').toLowerCase() !== 'trakt'))
+      .map((f) => folderSources(f).find((src) => !sourceBlocker(src)))
       .filter((src): src is CollectionSource => !!src)
       .slice(0, 2)
       .map((source) => ({ key: sourceKey(source), source }));
@@ -129,7 +175,8 @@ export function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroQueries.map((q) => q.dataUpdatedAt).join(',')]);
 
-  if (loaded && addonCount === 0) {
+  // Only on a Home with nothing else on it: a media server's rows or collections are a Home too.
+  if (loaded && addonCount === 0 && !hasRows && !addonsUnreadable) {
     return (
       <div className="screen-pad">
         <Empty icon={<Puzzle size={40} />} title="Add your addons to fill Home" action={<Button variant="primary" onClick={() => navigate({ name: 'settings', section: 'addons' })}>Open addons</Button>}>
@@ -142,24 +189,47 @@ export function Home() {
   return (
     <div className="home">
       {heroOn && heroSetting && heroItems.length > 0 && <Hero items={heroItems} />}
-      <div className={`home__rows ${heroOn && heroSetting && heroItems.length ? 'home__rows--under-hero' : ''}`}>
-        {showBuildHome && <NoHomeRows />}
-        {rows.map((r) =>
-          r.kind === 'continue' ? (
-            <ContinueRow key={r.key} title={r.title} />
-          ) : r.kind === 'catalog' ? (
-            <CatalogRow key={r.key} def={r} />
-          ) : (
-            <CollectionRow key={r.key} def={r} />
-          ),
-        )}
+      <div ref={rowsEl} className={`home__rows ${heroOn && heroSetting && heroItems.length ? 'home__rows--under-hero' : ''}`}>
+        {addonsUnreadable && <AddonsUnreadable />}
+        {showBuildHome && <NoHomeRows reason={anyRowOff ? 'off' : keptOff ? 'kept-off' : 'none'} />}
+        {rows.map((r) => (
+          <div key={r.key} data-row={r.key}>
+            {r.kind === 'continue' ? (
+              <ContinueRow title={r.title} menu={() => rowMenu(r, drawnRows())} />
+            ) : r.kind === 'catalog' ? (
+              <CatalogRow def={r} menu={() => rowMenu(r, drawnRows())} />
+            ) : (
+              <CollectionRow def={r} menu={() => rowMenu(r, drawnRows())} />
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-/** Shown when no installed catalog can sit on Home (common with collection-based setups). */
-function NoHomeRows() {
+/** The saved addons exist but could not be read: said plainly, with a way to try again. */
+function AddonsUnreadable() {
+  return (
+    <section className="home-empty">
+      <div className="home-empty__text">
+        <h2 className="home-empty__title">Your addons could not be loaded</h2>
+        <p className="home-empty__body">{ADDONS_UNREADABLE}</p>
+      </div>
+      <div className="home-empty__actions">
+        <Button variant="primary" onClick={() => void useAddons.getState().load()}>
+          Try again
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Shown when Home has no rows besides Continue Watching: every row is switched off, the addons
+ * keep their catalogs off Home (common with collection-based setups), or they have none.
+ */
+function NoHomeRows({ reason }: { reason: 'off' | 'kept-off' | 'none' }) {
   const file = useRef<HTMLInputElement>(null);
   const importFile = async (f: File) => {
     try {
@@ -176,35 +246,49 @@ function NoHomeRows() {
       <div className="home-empty__text">
         <h2 className="home-empty__title">Build your Home</h2>
         <p className="home-empty__body">
-          Your metadata addon keeps its catalogs off Home (they are meant for collections or need a genre picked). Import a collection file to fill Home, or browse every catalog in Discover.
+          {reason === 'off'
+            ? 'Every row is switched off. Turn rows back on in Home layout, or import a collection file.'
+            : reason === 'kept-off'
+              ? 'Your metadata addon keeps its catalogs off Home (they are meant for collections or need a genre picked). Import a collection file to fill Home, or browse every catalog in Discover.'
+              : 'Your addons have no catalogs for Home. Add a metadata addon (such as AIOMetadata), or import a collection file.'}
         </p>
       </div>
       <div className="home-empty__actions">
         <Button variant="primary" icon={<Upload size={16} />} onClick={() => file.current?.click()}>
           Import collection
         </Button>
-        <Button variant="secondary" icon={<Compass size={16} />} onClick={() => navigate({ name: 'discover' })}>
-          Open Discover
-        </Button>
+        {reason === 'off' ? (
+          <Button variant="secondary" icon={<SlidersHorizontal size={16} />} onClick={() => navigate({ name: 'settings', section: 'home' })}>
+            Home layout
+          </Button>
+        ) : reason === 'kept-off' ? (
+          <Button variant="secondary" icon={<Compass size={16} />} onClick={() => navigate({ name: 'discover' })}>
+            Open Discover
+          </Button>
+        ) : (
+          <Button variant="secondary" icon={<Puzzle size={16} />} onClick={() => navigate({ name: 'settings', section: 'addons' })}>
+            Open addons
+          </Button>
+        )}
         <input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => (e.target.files?.[0] && void importFile(e.target.files[0]), (e.target.value = ''))} />
       </div>
     </section>
   );
 }
 
-function ContinueRow({ title }: { title: string }) {
+function ContinueRow({ title, menu }: { title: string; menu: () => RowMenu }) {
   const { items } = useContinueWatching(30);
   const landscape = useSettings((s) => s.settings.appearance.landscapeContinueWatching);
   useCardArt(items.map((i) => ({ metaId: i.metaId, type: i.type, name: i.name, poster: i.poster })));
   if (!items.length) return null;
   return (
-    <Row title={title} shape={landscape ? 'wide' : 'poster'} className="row--continue" action={<button className="row__more" onClick={() => navigate({ name: 'library', tab: 'continue' })}>See all</button>}>
+    <Row title={title} menu={menu} shape={landscape ? 'wide' : 'poster'} className="row--continue" action={<button className="row__more" onClick={() => navigate({ name: 'library', tab: 'continue' })}>See all</button>}>
       {items.map((it) => {
         const card = { metaId: it.metaId, type: it.type, name: it.name, poster: it.poster, background: it.background, logo: it.logo };
         const sub = it.type === 'series' && it.season !== undefined ? `${it.kind === 'next' ? 'Next · ' : ''}S${it.season} E${it.episode}${it.episodeTitle ? ` · ${it.episodeTitle}` : ''}` : undefined;
         return landscape ? (
           <WideCard
-            key={it.metaId}
+            key={`${it.type}:${it.metaId}`}
             title={card}
             image={it.still && it.kind === 'resume' ? it.still : it.background ?? it.still}
             subtitle={sub}
@@ -216,14 +300,15 @@ function ContinueRow({ title }: { title: string }) {
             onPlay={() => void playContinue(it)}
           />
         ) : (
-          <PosterCard key={it.metaId} title={{ ...card, year: sub }} progress={it.progress} onPlay={() => void playContinue(it)} />
+          // Like the wide card: the poster plays, the name opens the title, the menu has Remove and Mark watched.
+          <PosterCard key={`${it.type}:${it.metaId}`} title={card} subtitle={sub} progress={it.progress} continueKey={it.key} season={it.season} episode={it.episode} onPlay={() => void playContinue(it)} />
         );
       })}
     </Row>
   );
 }
 
-function CatalogRow({ def }: { def: CatalogRowDef }) {
+function CatalogRow({ def, menu }: { def: CatalogRowDef; menu: () => RowMenu }) {
   const [ref, near] = useNearViewport<HTMLDivElement>();
   const q = useCatalog(def.addon.manifest.id, def.catalog.type, def.catalog.id, {}, near);
   const items = flatItems(q.data?.pages);
@@ -232,14 +317,16 @@ function CatalogRow({ def }: { def: CatalogRowDef }) {
     <div ref={ref}>
       <Row
         title={def.title}
+        menu={menu}
         loading={!near || q.isLoading}
-        onNearEnd={() => q.hasNextPage && !q.isFetchingNextPage && void q.fetchNextPage()}
+        onNearEnd={() => q.hasNextPage && !q.isFetchingNextPage && !q.isFetchNextPageError && void q.fetchNextPage()}
         action={
           <button className="row__more" onClick={() => navigate({ name: 'catalog', addonId: def.addon.manifest.id, type: def.catalog.type, catalogId: def.catalog.id, title: def.title })}>
             See all
           </button>
         }
       >
+        {q.isLoadingError && <RowRetry onRetry={() => void q.refetch()}>{def.addon.manifest.name} did not answer.</RowRetry>}
         {items.map((m) => (
           <PosterCard
             key={m.id}
@@ -248,6 +335,7 @@ function CatalogRow({ def }: { def: CatalogRowDef }) {
           />
         ))}
         {q.isFetchingNextPage && <div className="row__more-spinner" />}
+        {q.isFetchNextPageError && !q.isFetchingNextPage && <RowRetry onRetry={() => void q.fetchNextPage()} />}
       </Row>
     </div>
   );
@@ -256,14 +344,17 @@ function CatalogRow({ def }: { def: CatalogRowDef }) {
 /** Home shows this many folders per collection row; Open shows them all. */
 const ROW_FOLDER_LIMIT = 24;
 
-function CollectionRow({ def }: { def: CollectionRowDef }) {
+/** The shape set for a folder in its editor ("Tile shape"); each tile is drawn in its own. */
+const isWide = (f: CollectionFolder) => /landscape|wide/i.test(f.tileShape ?? '');
+
+function CollectionRow({ def, menu }: { def: CollectionRowDef; menu: () => RowMenu }) {
   const folders = def.collection.folders;
   if (!folders.length) return null;
-  const wide = folders.some((f) => (f.tileShape ?? '').toLowerCase().match(/landscape|wide/));
   return (
     <Row
       title={def.title}
-      shape={wide ? 'wide' : 'poster'}
+      menu={menu}
+      shape={folders.every(isWide) ? 'wide' : 'poster'}
       action={
         <span className="row__actions">
           <button className="row__more" onClick={() => navigate({ name: 'collection-edit', id: def.collection.id })}>
@@ -278,7 +369,7 @@ function CollectionRow({ def }: { def: CollectionRowDef }) {
       {folders.slice(0, ROW_FOLDER_LIMIT).map((f, i) => (
         <div
           key={f.id}
-          className={`card ${wide ? 'card--wide' : 'card--poster'} card--folder`}
+          className={`card ${isWide(f) ? 'card--wide' : 'card--poster'} card--folder`}
           onContextMenu={(e) => {
             const store = useCollections.getState();
             const cid = def.collection.id;

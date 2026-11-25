@@ -11,11 +11,34 @@ interface Props {
   nav?: boolean;
 }
 
+/** Minimize, maximize and close. Also drawn over dialogs and sheets, which cover the title bar. */
+export function WindowButtons() {
+  const maximized = usePlayer((s) => s.window.maximized);
+  const fullscreen = usePlayer((s) => s.window.fullscreen);
+  if (fullscreen) return null;
+  return (
+    <div className="titlebar__buttons">
+      <button className="winbtn" aria-label="Minimize" onClick={appWindow.minimize}>
+        <Minus size={16} strokeWidth={1.5} />
+      </button>
+      <button className="winbtn" aria-label={maximized ? 'Restore' : 'Maximize'} onClick={appWindow.toggleMaximize}>
+        {maximized ? <Copy size={13} strokeWidth={1.5} style={{ transform: 'scaleX(-1)' }} /> : <Square size={12.5} strokeWidth={1.5} />}
+      </button>
+      <button className="winbtn winbtn--close" aria-label="Close" onClick={appWindow.close}>
+        <X size={17} strokeWidth={1.5} />
+      </button>
+    </div>
+  );
+}
+
 export function TitleBar({ overVideo = false, visible = true, nav = false }: Props) {
   const maximized = usePlayer((s) => s.window.maximized);
   const fullscreen = usePlayer((s) => s.window.fullscreen);
   const canBack = useNav((s) => s.index > 0);
   const canForward = useNav((s) => s.index < s.stack.length - 1);
+  // Not on Home (the starting point) and not when neither direction goes anywhere.
+  const onHome = useNav((s) => s.stack[s.index].route.name === 'home');
+  const showNav = nav && !onHome && (canBack || canForward);
   if (fullscreen) return null;
 
   return (
@@ -32,7 +55,7 @@ export function TitleBar({ overVideo = false, visible = true, nav = false }: Pro
           <div className="resize-edge resize-edge--ne" onPointerDown={(e) => (e.stopPropagation(), appWindow.resize('ne'))} />
         </>
       )}
-      {nav && (
+      {showNav && (
         <div className="titlebar__nav">
           <button className="titlebar__navbtn" aria-label="Back" title="Back (Alt+←)" disabled={!canBack} onClick={() => useNav.getState().back()}>
             <ChevronLeft size={18} />
@@ -43,17 +66,7 @@ export function TitleBar({ overVideo = false, visible = true, nav = false }: Pro
         </div>
       )}
       <div className="titlebar__spacer" />
-      <div className="titlebar__buttons">
-        <button className="winbtn" aria-label="Minimize" onClick={appWindow.minimize}>
-          <Minus size={16} strokeWidth={1.5} />
-        </button>
-        <button className="winbtn" aria-label={maximized ? 'Restore' : 'Maximize'} onClick={appWindow.toggleMaximize}>
-          {maximized ? <Copy size={13} strokeWidth={1.5} style={{ transform: 'scaleX(-1)' }} /> : <Square size={12.5} strokeWidth={1.5} />}
-        </button>
-        <button className="winbtn winbtn--close" aria-label="Close" onClick={appWindow.close}>
-          <X size={17} strokeWidth={1.5} />
-        </button>
-      </div>
+      <WindowButtons />
     </header>
   );
 }

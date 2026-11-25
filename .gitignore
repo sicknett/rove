@@ -7,3 +7,4 @@
 /.claude/
 /ui/.env.local
 *.local
+/installer/build/

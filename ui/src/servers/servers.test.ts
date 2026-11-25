@@ -105,6 +105,47 @@ describe('Plex', () => {
   });
 });
 
+describe('the server list', () => {
+  it('puts a removed server back under its own id and in its place', () => {
+    const store = useServers.getState();
+    store.remove('e1');
+    expect(useServers.getState().servers.map((s) => s.id)).toEqual(['j1', 'p1']);
+    store.restore(emby, 1);
+    expect(useServers.getState().servers.map((s) => s.id)).toEqual(['j1', 'e1', 'p1']);
+    // Once is enough.
+    store.restore(emby, 0);
+    expect(useServers.getState().servers).toHaveLength(3);
+  });
+
+  it('knows a Plex server by its machine id, whatever address it was reached at', () => {
+    useServers.setState({ servers: [{ ...plex, machineId: 'M1' }], loaded: true });
+    const again = useServers.getState().add({ kind: 'plex', name: 'Plex', url: 'https://remote.example:32400', token: 'PT2', machineId: 'M1' });
+    expect(again.id).toBe('p1');
+    expect(useServers.getState().servers).toHaveLength(1);
+    expect(useServers.getState().servers[0].url).toBe('https://remote.example:32400');
+    // A different machine is a different server.
+    useServers.getState().add({ kind: 'plex', name: 'Other', url: 'http://nas:32400', token: 'PT3', machineId: 'M2' });
+    expect(useServers.getState().servers).toHaveLength(2);
+  });
+
+  it('looks for a Plex server at its other addresses when the saved one stops answering', async () => {
+    useServers.setState({
+      servers: [{ ...plex, url: 'http://old:32400', machineId: 'M1', connections: [{ uri: 'http://old:32400', local: true, relay: false }, { uri: 'http://new:32400', local: false, relay: false }] }],
+      loaded: true,
+    });
+    routes.push(
+      [/^http:\/\/old:32400/, () => ({ status: 503, body: {} })],
+      [/plex\.tv\/api\/v2\/resources/, () => ({ status: 401, body: {} })],
+      [/^http:\/\/new:32400\/identity/, () => ({ body: { MediaContainer: { machineIdentifier: 'M1' } } })],
+      [/^http:\/\/new:32400\/library\/sections/, () => ({ body: { MediaContainer: { Directory: [{ key: '1', title: 'Movies', type: 'movie' }] } } })],
+    );
+    const libraries = await useServers.getState().refresh('p1');
+    expect(libraries).toEqual([{ id: '1', name: 'Movies', type: 'movie' }]);
+    expect(useServers.getState().servers[0].url).toBe('http://new:32400');
+    expect(useServers.getState().servers[0].libraries).toEqual(libraries);
+  });
+});
+
 describe('servers as catalog sources', () => {
   it('offers continue, recently added, each library and a search catalog', () => {
     const a = serverAsAddon({ ...jf, libraries: [{ id: 'L', name: 'Movies', type: 'movie' }] });

@@ -9,14 +9,14 @@ export function ResumeDialog() {
   const prompt = usePlayback((s) => s.resumePrompt);
   if (!prompt) return null;
   const t = prompt.target;
+  // From a tracker that only knows a share of the video: the running time is a guess, so no times.
+  const share = prompt.percent !== undefined ? `${Math.round(prompt.percent)} %` : null;
   return (
     <Dialog open onClose={() => usePlayback.setState({ resumePrompt: null })} title={t.type === 'series' && t.season !== undefined ? `${t.name} · S${t.season} E${t.episode}` : t.name} width={460}>
-      <p className="dialog__text">
-        You stopped at {formatTime(prompt.positionS)} of {formatTime(prompt.durationS)}.
-      </p>
+      <p className="dialog__text">{share ? `You stopped about ${share} of the way through.` : `You stopped at ${formatTime(prompt.positionS)} of ${formatTime(prompt.durationS)}.`}</p>
       <div className="dialog__stack">
         <Button variant="primary" size="lg" icon={<Play size={18} fill="currentColor" strokeWidth={0} />} data-autofocus onClick={() => resumeChoice(false)}>
-          Resume from {formatTime(prompt.positionS)}
+          {share ? `Resume at ${share}` : `Resume from ${formatTime(prompt.positionS)}`}
         </Button>
         <Button variant="secondary" size="lg" icon={<RotateCcw size={18} />} onClick={() => resumeChoice(true)}>
           Start from the beginning
@@ -26,10 +26,14 @@ export function ResumeDialog() {
   );
 }
 
-/** Full-screen "finding a source" state, over everything, until one starts or the picker opens. */
+/**
+ * Full-screen "finding a source" state, until one starts or the picker opens. Not while something
+ * plays (the next episode, a fresh link): it would cover the video, so the player shows it instead.
+ */
 export function FindingOverlay() {
   const finding = usePlayback((s) => s.finding);
-  if (!finding) return null;
+  const playing = usePlayback((s) => !!s.session);
+  if (!finding || playing) return null;
   return (
     <div className="finding" role="status" aria-live="polite">
       <Img src={finding.background ?? finding.poster} alt="" className="finding__bg" loading="eager" />

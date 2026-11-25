@@ -1,5 +1,7 @@
 // JSON over the shell's fetch, with in-flight de-duplication, a memory cache, retries with
 // backoff for flaky networks and rate limits, and Stremio's cacheMaxAge honoured.
+// A request that timed out is not tried again here: the server had its full time already, and
+// callers (and the query cache above them) retry on their own, so waits would multiply.
 
 import { nativeFetch, NetworkError, type NativeRequest } from './native';
 
@@ -20,6 +22,11 @@ const inflight = new Map<string, Promise<unknown>>();
 const MAX_CACHE = 1500;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The shell reports a timeout as a network error whose text says so. */
+export function isTimeout(e: unknown): boolean {
+  return e instanceof NetworkError && /timed? ?out/i.test(e.message);
+}
 
 export interface JsonOptions extends Omit<NativeRequest, 'url'> {
   /** Cache the parsed result this long (GET only). A body `cacheMaxAge` (seconds) can extend it. */
@@ -61,7 +68,7 @@ async function requestJson<T>(url: string, opts: JsonOptions): Promise<T> {
         throw new HttpError(res.status, url, 'not JSON');
       }
     } catch (e) {
-      if (e instanceof NetworkError && attempt < retries && !opts.signal?.aborted) {
+      if (e instanceof NetworkError && !isTimeout(e) && attempt < retries && !opts.signal?.aborted) {
         attempt++;
         await sleep(500 * 2 ** (attempt - 1));
         continue;

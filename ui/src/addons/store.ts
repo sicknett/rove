@@ -43,48 +43,94 @@ export async function fetchManifest(url: string): Promise<Manifest> {
   return { ...manifest, catalogs: manifest.catalogs ?? [], types: manifest.types ?? [] };
 }
 
+/**
+ * The link is new, but an installed addon has the same manifest id (the same addon, configured
+ * again). Two of them would answer for each other's catalogs and rows, so the caller offers to
+ * replace the installed one: `add(link, { replace: true })`.
+ */
+export class AddonConflict extends Error {
+  constructor(
+    readonly existing: InstalledAddon,
+    readonly manifest: Manifest,
+  ) {
+    super(`${existing.manifest.name} is already installed.`);
+    this.name = 'AddonConflict';
+  }
+}
+
+/** Shown wherever addons are listed or added while the saved list cannot be read. */
+export const ADDONS_UNREADABLE = 'Your saved addons could not be read, so nothing is changed. Try again, or restart ROVE.';
+
 interface AddonState {
   loaded: boolean;
+  /**
+   * The saved list exists but could not be read. The list in memory is empty then and is never
+   * saved, or it would replace the real one; `load` again to retry.
+   */
+  loadFailed: boolean;
   addons: InstalledAddon[];
   load: () => Promise<void>;
-  add: (input: string) => Promise<InstalledAddon>;
+  add: (input: string, opts?: { replace?: boolean }) => Promise<InstalledAddon>;
   addMany: (urls: string[], enabled?: Record<string, boolean>) => Promise<{ added: number; failed: string[] }>;
   remove: (url: string) => void;
+  /** Puts a removed addon back where it was, as it was (no request needed). False if it is installed again already. */
+  restore: (addon: InstalledAddon, index: number) => boolean;
   move: (url: string, to: number) => void;
   setEnabled: (url: string, enabled: boolean) => void;
   toggleResource: (url: string, resource: string) => void;
-  refreshManifests: () => Promise<void>;
+  /** Fetches every manifest again; `failed` names the addons that did not answer. */
+  refreshManifests: () => Promise<{ failed: string[] }>;
 }
 
 function persist(addons: InstalledAddon[]) {
+  if (useAddons.getState().loadFailed) return;
   writer.save({ version: 1, addons });
 }
 
 export const useAddons = create<AddonState>((set, get) => ({
   loaded: false,
+  loadFailed: false,
   addons: [],
 
   async load() {
-    const doc = await secrets.read<{ addons: InstalledAddon[] }>(DOC).catch(() => null);
-    set({ addons: doc?.addons ?? [], loaded: true });
+    let doc: { addons: InstalledAddon[] } | null;
+    try {
+      // Null when nothing is saved yet; a throw when the file is there but cannot be read.
+      doc = await secrets.read<{ addons: InstalledAddon[] }>(DOC);
+    } catch (e) {
+      console.error('addons could not be read', e);
+      set({ addons: [], loaded: true, loadFailed: true });
+      return;
+    }
+    set({ addons: doc?.addons ?? [], loaded: true, loadFailed: false });
     // Manifests change when an addon is reconfigured; refresh quietly after start.
     void get().refreshManifests();
   },
 
-  async add(input) {
+  async add(input, opts = {}) {
+    // One more try at reading the saved list first; without it, adding would replace that list.
+    if (get().loadFailed) await get().load();
+    if (get().loadFailed) throw new Error(ADDONS_UNREADABLE);
     const url = normalizeManifestUrl(input);
     if (get().addons.some((a) => a.url === url)) throw new Error('That addon is already installed.');
     const manifest = await fetchManifest(url);
-    const addon: InstalledAddon = { url, manifest, enabled: true, addedAt: Date.now() };
-    const addons = [...get().addons, addon];
+    // Checked again after the wait: the same link can be submitted twice before the first answers.
+    const now = get().addons;
+    const same = now.find((a) => a.url === url);
+    if (same) return same;
+    const twin = now.find((a) => a.manifest.id === manifest.id);
+    if (twin && !opts.replace) throw new AddonConflict(twin, manifest);
+    // A replacement keeps the place and the switches of the one it replaces.
+    const addon: InstalledAddon = twin ? { ...twin, url, manifest } : { url, manifest, enabled: true, addedAt: Date.now() };
+    const addons = twin ? now.map((a) => (a === twin ? addon : a)) : [...now, addon];
     set({ addons });
     persist(addons);
     return addon;
   },
 
   async addMany(urls, enabled = {}) {
+    if (get().loadFailed) return { added: 0, failed: urls.map(addonHost) };
     const failed: string[] = [];
-    let added = 0;
     const existing = new Set(get().addons.map((a) => a.url));
     const fresh: InstalledAddon[] = [];
     await Promise.all(
@@ -94,13 +140,19 @@ export const useAddons = create<AddonState>((set, get) => ({
           if (existing.has(url)) return;
           const manifest = await fetchManifest(url);
           fresh[i] = { url, manifest, enabled: enabled[raw] ?? enabled[url] ?? true, addedAt: Date.now() + i };
-          added++;
         } catch {
           failed.push(addonHost(raw));
         }
       }),
     );
-    const addons = [...get().addons, ...fresh.filter(Boolean)];
+    // One addon per link and per manifest id, counting what was installed while these loaded.
+    const addons = [...get().addons];
+    let added = 0;
+    for (const a of fresh.filter(Boolean)) {
+      if (addons.some((x) => x.url === a.url || x.manifest.id === a.manifest.id)) continue;
+      addons.push(a);
+      added++;
+    }
     set({ addons });
     persist(addons);
     return { added, failed };
@@ -110,6 +162,15 @@ export const useAddons = create<AddonState>((set, get) => ({
     const addons = get().addons.filter((a) => a.url !== url);
     set({ addons });
     persist(addons);
+  },
+
+  restore(addon, index) {
+    const addons = [...get().addons];
+    if (get().loadFailed || addons.some((a) => a.url === addon.url || a.manifest.id === addon.manifest.id)) return false;
+    addons.splice(Math.max(0, Math.min(addons.length, index)), 0, addon);
+    set({ addons });
+    persist(addons);
+    return true;
   },
 
   move(url, to) {
@@ -141,21 +202,30 @@ export const useAddons = create<AddonState>((set, get) => ({
   },
 
   async refreshManifests() {
-    const current = get().addons;
-    const refreshed = await Promise.all(
-      current.map(async (a) => {
+    const failed: string[] = [];
+    const byUrl = new Map<string, Manifest>();
+    await Promise.all(
+      get().addons.map(async (a) => {
         try {
-          return { ...a, manifest: await fetchManifest(a.url) };
+          byUrl.set(a.url, await fetchManifest(a.url));
         } catch {
-          return a;
+          failed.push(a.manifest.name);
         }
       }),
     );
-    // Keep any edits made while the refresh ran.
-    const byUrl = new Map(refreshed.map((a) => [a.url, a.manifest]));
-    const addons = get().addons.map((a) => ({ ...a, manifest: byUrl.get(a.url) ?? a.manifest }));
-    set({ addons });
-    persist(addons);
+    // Keep any edits made while the refresh ran, and save only when a manifest really changed.
+    let changed = false;
+    const addons = get().addons.map((a) => {
+      const manifest = byUrl.get(a.url);
+      if (!manifest || JSON.stringify(manifest) === JSON.stringify(a.manifest)) return a;
+      changed = true;
+      return { ...a, manifest };
+    });
+    if (changed) {
+      set({ addons });
+      persist(addons);
+    }
+    return { failed };
   },
 }));
 

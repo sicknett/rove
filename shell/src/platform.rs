@@ -8,7 +8,7 @@ use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, FindWindowW, GWL_STYLE, GetClientRect, GetWindowLongPtrW, SetWindowLongPtrW, WS_CLIPCHILDREN, HWND_BOTTOM, IsIconic, MB_ICONERROR, MB_OK, MessageBoxW,
     RegisterClassW, SW_RESTORE, SW_SHOWNORMAL, SWP_NOACTIVATE, SetForegroundWindow, SetWindowPos, ShowWindow,
-    WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_DISABLED, WS_VISIBLE,
+    WNDCLASSW, WS_CHILD, WS_DISABLED, WS_VISIBLE,
 };
 
 /// The main window's class, which a second launch finds the first one by.
@@ -30,6 +30,9 @@ pub fn claim_instance(data_dir: &std::path::Path) -> Option<SingleInstance> {
     let name = wide(&format!("Local\\RoveDesktop-{hash:016x}"));
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if handle.is_null() || unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
+        // A fixed name for the installer to see that ROVE is running (whatever the data folder).
+        // Held until the process ends.
+        unsafe { CreateMutexW(std::ptr::null(), 0, wide("RoveDesktopRunning").as_ptr()) };
         return Some(SingleInstance(handle));
     }
     unsafe {
@@ -107,7 +110,9 @@ impl VideoSurface {
                 0,
                 class.as_ptr(),
                 std::ptr::null(),
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_DISABLED,
+                // Not WS_CLIPSIBLINGS: the page's host window lies over this one, and with sibling
+                // clipping Windows cuts the whole video out, leaving no picture during playback.
+                WS_CHILD | WS_VISIBLE | WS_DISABLED,
                 0,
                 0,
                 width as i32,
@@ -162,9 +167,35 @@ pub fn work_area(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
 }
 
 /// Children (video, page) are left alone when the main window paints its background.
+///
+/// This matters for more than flicker: the page's host window sits above the video window and
+/// never paints itself, so whatever the main window paints there is what shows. If the main
+/// window fills that area with its background, the video is covered and playback shows no picture.
+///
+/// The window library rebuilds the style from its own flags whenever the window is shown,
+/// maximized or put in full screen, dropping the bit, so it is put back on every style change.
 pub fn clip_children(hwnd: isize) {
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{STYLESTRUCT, WM_STYLECHANGING};
+
+    unsafe extern "system" fn keep_clip(hwnd: HWND, msg: u32, wparam: usize, lparam: isize, _id: usize, _data: usize) -> isize {
+        if msg == WM_STYLECHANGING && wparam as i32 == GWL_STYLE {
+            let styles = lparam as *mut STYLESTRUCT;
+            if !styles.is_null() {
+                unsafe { (*styles).styleNew |= WS_CLIPCHILDREN };
+            }
+        }
+        unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+    }
+
     unsafe {
+        SetWindowSubclass(hwnd as HWND, Some(keep_clip), 0x524f5645, 0);
         let style = GetWindowLongPtrW(hwnd as HWND, GWL_STYLE);
         SetWindowLongPtrW(hwnd as HWND, GWL_STYLE, style | WS_CLIPCHILDREN as isize);
     }
+}
+
+/// Whether the main window still keeps its children clear of its own painting (for the log).
+pub fn clips_children(hwnd: isize) -> bool {
+    unsafe { GetWindowLongPtrW(hwnd as HWND, GWL_STYLE) as u32 & WS_CLIPCHILDREN != 0 }
 }

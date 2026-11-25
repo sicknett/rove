@@ -107,6 +107,20 @@ export async function pickConnection(choice: PlexServerChoice): Promise<string> 
   }
 }
 
+/**
+ * A Plex server answers at different addresses on different networks (at home, away, through
+ * Plex's relay), so the one saved when it was added stops working when the PC or the server
+ * moves. Finds one that answers now: from plex.tv's current list when the saved token is good
+ * there (a server owner's is), else among the addresses saved with the server.
+ */
+export async function resolvePlexAddress(s: MediaServer): Promise<Pick<MediaServer, 'url' | 'connections'>> {
+  const listed = s.machineId ? (await plexServers(s.token).catch(() => [])).find((c) => c.machineId === s.machineId) : undefined;
+  const connections = listed?.connections ?? s.connections ?? [];
+  if (!s.machineId || !connections.length) throw new ServerError(`${s.name} could not be reached.`);
+  const url = await pickConnection({ name: s.name, machineId: s.machineId, owned: true, token: s.token, connections });
+  return { url, connections };
+}
+
 // ---------- Items ----------
 
 interface PlexItem {

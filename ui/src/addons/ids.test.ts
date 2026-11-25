@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { idMatchesPrefixes, parseId, tmdbIdOf } from './ids';
+import { idMatchesPrefixes, parseId, titleKey, tmdbIdOf, tmdbTitleNumber } from './ids';
 
 describe('parseId', () => {
   it('reads IMDb titles and episodes', () => {
@@ -22,5 +22,23 @@ describe('parseId', () => {
     expect(idMatchesPrefixes('tmdb:1', ['tt'])).toBe(false);
     expect(idMatchesPrefixes('tmdb:1', undefined)).toBe(true);
     expect(tmdbIdOf('tmdb:1399:1:2')).toBe(1399);
+  });
+});
+
+describe('titleKey', () => {
+  it('tells a TMDB movie from the show with the same number', () => {
+    expect(titleKey('tmdb:693', 'movie')).toBe('tmdb:693@movie');
+    expect(titleKey('tmdb:693', 'series')).toBe('tmdb:693@series');
+    expect(titleKey('TMDB:693', 'series')).toBe('tmdb:693@series');
+  });
+  it('leaves every other id as it is', () => {
+    expect(titleKey('tt0944947', 'series')).toBe('tt0944947');
+    expect(titleKey('kitsu:1', 'series')).toBe('kitsu:1');
+    expect(titleKey('srv:s1:12345', 'movie')).toBe('srv:s1:12345');
+  });
+  it('reads the number of a bare tmdb title id only', () => {
+    expect(tmdbTitleNumber('tmdb:693')).toBe(693);
+    expect(tmdbTitleNumber('tmdb:693:3:15')).toBeNull();
+    expect(tmdbTitleNumber('tt693')).toBeNull();
   });
 });

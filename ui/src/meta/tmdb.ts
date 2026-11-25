@@ -1,8 +1,10 @@
 // TMDB: logo art, cast, recommendations, trailers, certifications and IMDb/TMDB id mapping.
 // Works with a v3 API key or a v4 read token; without one these return null and the
-// interface falls back to what the metadata addon gives.
+// interface falls back to what the metadata addon gives. Null also means TMDB does not know the
+// id (404). Anything else that goes wrong (no answer, a refused key, a rate limit) throws, so it
+// is tried again later instead of being remembered as "TMDB has nothing".
 
-import { getJson } from '../lib/http';
+import { getJson, HttpError } from '../lib/http';
 import { effectiveTmdbKey } from '../state/keys';
 
 const API = 'https://api.themoviedb.org/3';
@@ -18,22 +20,37 @@ export function hasTmdb() {
   return !!effectiveTmdbKey();
 }
 
+/** A v4 read token is a JWT and goes in a header; a v3 key goes in the query. */
+function auth(key: string): { query: Record<string, string>; headers?: Record<string, string> } {
+  return key.startsWith('eyJ') ? { query: {}, headers: { Authorization: `Bearer ${key}` } } : { query: { api_key: key } };
+}
+
 export async function tmdb<T>(path: string, params: Record<string, string> = {}, ttlMs = 12 * 3600 * 1000): Promise<T | null> {
   const key = effectiveTmdbKey()?.trim();
   if (!key) return null;
-  const isToken = key.startsWith('eyJ');
-  const query = new URLSearchParams({ language: 'en-US', ...params, ...(isToken ? {} : { api_key: key }) });
-  const url = `${API}${path}?${query}`;
+  const { query, headers } = auth(key);
+  const url = `${API}${path}?${new URLSearchParams({ language: 'en-US', ...params, ...query })}`;
   const cacheParams = new URLSearchParams({ language: 'en-US', ...params });
   try {
-    return await getJson<T>(url, {
-      ttlMs,
-      cacheKey: `tmdb:${path}?${cacheParams}`,
-      headers: isToken ? { Authorization: `Bearer ${key}` } : undefined,
-      timeoutMs: 15000,
-    });
-  } catch {
-    return null;
+    return await getJson<T>(url, { ttlMs, cacheKey: `tmdb:${path}?${cacheParams}`, headers, timeoutMs: 15000 });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/**
+ * Asks TMDB whether it accepts `key`, before it is saved. False means TMDB refused it; a throw
+ * means TMDB could not be asked (offline, or it is down), which says nothing about the key.
+ */
+export async function checkTmdbKey(key: string): Promise<boolean> {
+  const { query, headers } = auth(key.trim());
+  try {
+    await getJson(`${API}/configuration?${new URLSearchParams(query)}`, { headers, timeoutMs: 15000, retries: 1 });
+    return true;
+  } catch (e) {
+    if (e instanceof HttpError && (e.status === 401 || e.status === 403 || e.status === 404)) return false;
+    throw e;
   }
 }
 

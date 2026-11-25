@@ -6,6 +6,9 @@ const calls: { url: string; method?: string; body?: unknown }[] = [];
 
 vi.mock('../../lib/native', () => ({
   NetworkError: class extends Error {},
+  // The id map (used by the PublicMetaDB adapter) keeps its document here.
+  docs: { read: vi.fn(async () => null), write: vi.fn(async () => undefined) },
+  debouncedWriter: () => ({ save: () => undefined, flush: async () => undefined }),
   nativeFetch: vi.fn(async (req: { url: string; method?: string; body?: string }) => {
     calls.push({ url: req.url, method: req.method, body: req.body ? JSON.parse(req.body) : undefined });
     const hit = routes.find(([re]) => re.test(req.url));
@@ -20,6 +23,7 @@ vi.stubEnv('VITE_SIMKL_CLIENT_ID', 'simkl-id');
 const { traktAdapter } = await import('./trakt');
 const { simklAdapter } = await import('./simkl');
 const { mdblistAdapter } = await import('./mdblist');
+const { pmdbAdapter } = await import('./pmdb');
 
 beforeEach(() => {
   routes.length = 0;
@@ -77,6 +81,92 @@ describe('Trakt', () => {
     const h = { progress: { 'srv:a:b': { key: 'srv:a:b', metaId: 'srv:a:b', type: 'movie' as const, positionS: 10, durationS: 100, updatedAt: 1 } }, watched: {} };
     await expect(traktAdapter.push(account, { op: 'resume', key: 'srv:a:b' } as never, h)).resolves.toBe('skip');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('a bad answer is not an empty history', () => {
+  const account = { provider: 'trakt' as const, accessToken: 'tok' };
+  const ok = (): [RegExp, () => { body: unknown }][] => [
+    [/playback\/movies/, () => ({ body: [] })],
+    [/playback\/episodes/, () => ({ body: [] })],
+    [/watched\/movies/, () => ({ body: [] })],
+    [/watched\/shows/, () => ({ body: [] })],
+    [/watchlist\/movies/, () => ({ body: [] })],
+    [/watchlist\/shows/, () => ({ body: [] })],
+  ];
+
+  it('fails the pull when a list comes back as something else', async () => {
+    // A gateway's HTML page with a 200, and an error object where a list belongs.
+    routes.push([/watched\/shows/, () => ({ body: '<html>Service unavailable</html>' })], ...ok());
+    await expect(traktAdapter.pull(account)).rejects.toMatchObject({ kind: 'retry' });
+    routes.length = 0;
+    routes.push([/watched\/movies/, () => ({ body: { error: 'try later' } })], ...ok());
+    await expect(traktAdapter.pull(account)).rejects.toMatchObject({ kind: 'retry' });
+  });
+
+  it('syncs history without the watchlist when only that fails, and says so', async () => {
+    routes.push([/watchlist\/shows/, () => ({ status: 404, body: {} })], ...ok());
+    const r = await traktAdapter.pull(account);
+    expect(r.watchlist).toBeUndefined();
+    expect(r.incomplete).toEqual(['watchlist']);
+    routes.length = 0;
+    routes.push(...ok());
+    const whole = await traktAdapter.pull(account);
+    expect(whole.watchlist).toEqual([]);
+    expect(whole.incomplete).toEqual([]);
+  });
+});
+
+describe('PublicMetaDB', () => {
+  const account = { provider: 'pmdb' as const, apiKey: 'pm-key' };
+  const resume = { id: 'r1', tmdb_id: 693, media_type: 'tv', season: 3, episode: 15, position_ms: 600000, runtime_ms: 3000000, updated: '2026-01-01T00:00:00Z' };
+  const seen = (season: number, episode: number) => ({ tmdb_id: 693, media_type: 'tv', season, episode, watched_at: '2025-12-01T00:00:00Z' });
+  const mappings: [RegExp, () => { status?: number; body: unknown }][] = [
+    [/mappings\?tmdb_id=693/, () => ({ body: { imdb_id: 'tt0903747' } })],
+    [/mappings/, () => ({ status: 404, body: {} })],
+  ];
+
+  it('reads every page, under IMDb ids where they map, and keeps the TMDB id', async () => {
+    routes.push(
+      ...mappings,
+      [/\/resume\?/, () => ({ body: { items: [resume], total: 1, totalPages: 1 } })],
+      [/\/watched\?page=1/, () => ({ body: { items: [seen(3, 13), seen(3, 14)], total: 3, perPage: 2 } })],
+      [/\/watched\?page=2/, () => ({ body: { items: [seen(3, 12)], total: 3, perPage: 2 } })],
+      [/\/lists\/L\/items/, () => ({ body: { items: [{ tmdb_id: 5, media_type: 'movie', title: 'Film' }] } })],
+      [/\/lists\?/, () => ({ body: { lists: [{ id: 'L', type: 'watchlist' }] } })],
+    );
+    const r = await pmdbAdapter.pull(account);
+    expect(r.progress).toEqual([expect.objectContaining({ key: 'tt0903747:3:15', metaId: 'tt0903747', tmdbId: 693, positionS: 600, durationS: 3000 })]);
+    expect(r.watched.map((w) => w.key).sort()).toEqual(['tt0903747:3:12', 'tt0903747:3:13', 'tt0903747:3:14']);
+    // No IMDb id for this one (yet): it stays under its TMDB id, with the type it has there.
+    expect(r.watchlist).toEqual([expect.objectContaining({ metaId: 'tmdb:5', type: 'movie', tmdbId: 5 })]);
+    expect(r.incomplete).toEqual([]);
+  });
+
+  it('fails the pull on a body that is not a page, instead of reading it as empty', async () => {
+    routes.push(...mappings, [/\/resume\?/, () => ({ body: { items: [resume] } })], [/\/watched\?/, () => ({ body: '<html>Bad gateway</html>' })]);
+    await expect(pmdbAdapter.pull(account)).rejects.toMatchObject({ kind: 'retry' });
+  });
+
+  it('marks a list incomplete when fewer items arrive than it counts, or the watchlist cannot be read', async () => {
+    routes.push(
+      ...mappings,
+      [/\/resume\?/, () => ({ body: { items: [resume], total: 1 } })],
+      [/\/watched\?page=1/, () => ({ body: { items: [seen(3, 13)], total: 40, totalPages: 1 } })],
+      [/\/lists\?/, () => ({ status: 404, body: {} })],
+    );
+    const r = await pmdbAdapter.pull(account);
+    expect(r.incomplete).toEqual(['watched', 'watchlist']);
+    expect(r.watchlist).toBeUndefined();
+  });
+
+  it('keeps a change whose title has no TMDB id yet, and skips what can never have one', async () => {
+    routes.push([/mappings/, () => ({ status: 404, body: {} })]);
+    const entry = (metaId: string) => ({ key: metaId, metaId, type: 'movie' as const, positionS: 10, durationS: 100, updatedAt: 1 });
+    const h = { progress: { tt0000001: entry('tt0000001'), 'srv:a:b': entry('srv:a:b') }, watched: {} };
+    await expect(pmdbAdapter.push(account, { op: 'resume', key: 'tt0000001', at: 1 }, h)).resolves.toBe('unmapped');
+    await expect(pmdbAdapter.push(account, { op: 'resume', key: 'srv:a:b', at: 1 }, h)).resolves.toBe('skip');
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
   });
 });
 

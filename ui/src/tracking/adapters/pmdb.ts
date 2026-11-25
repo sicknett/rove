@@ -1,11 +1,11 @@
 // PublicMetaDB as a tracker: TMDB-keyed resume points, watched history and watchlist.
 
 import { pool } from '../../lib/http';
-import { watchKey } from '../../addons/ids';
+import { isImdbId, parseId, watchKey } from '../../addons/ids';
 import type { ProgressEntry, WatchedEntry } from '../../state/history';
 import { flushIdMap, metaIdFor, tmdbFor } from '../idmap';
-import { parsePmdbTime, pmdb, PmdbError, type PmdbResume, type PmdbTarget, type PmdbWatched } from '../pmdb';
-import { TrackerError, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
+import { parsePmdbTime, pmdb, PmdbError, type PmdbListItem, type PmdbPage, type PmdbResume, type PmdbTarget, type PmdbWatched } from '../pmdb';
+import { TrackerError, type PullResult, type PushResult, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
 
 /** PMDB resume ids by our watch key, from the last pull: needed to delete or replace one. */
 const resumeIds = new Map<string, string>();
@@ -36,11 +36,33 @@ async function targetFor(item: { metaId: string; type: 'movie' | 'series'; seaso
   return t.kind === 'movie' ? { tmdbId: t.id, mediaType: 'movie' } : { tmdbId: t.id, mediaType: 'tv', season: item.season ?? 1, episode: item.episode ?? 1 };
 }
 
+/** No TMDB id for this title: worth another try for an IMDb id (the lookup may have failed), final for anything else. */
+const noTarget = (item: { metaId: string }): PushResult => (isImdbId(parseId(item.metaId).base) ? 'unmapped' : 'skip');
+
+/** The id of the account's watchlist, or null when it has none. Throws when the lists cannot be read. */
 async function listId(apiKey: string): Promise<string | null> {
   if (watchlistId !== undefined) return watchlistId;
-  const lists = await pmdb.lists(apiKey).catch(() => []);
+  const lists = await pmdb.lists(apiKey);
   watchlistId = lists.find((l) => l.type === 'watchlist')?.id ?? null;
   return watchlistId;
+}
+
+/**
+ * Every page of one of the account's lists. `complete` is false when the page limit ended it
+ * early or fewer items arrived than the API counts: the sync then removes nothing on its word.
+ */
+async function allPages<T>(fetchPage: (page: number) => Promise<PmdbPage<T>>, maxPages: number, perPage = 100): Promise<{ items: T[]; complete: boolean }> {
+  const items: T[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await fetchPage(page);
+    items.push(...res.items);
+    const size = res.perPage ?? perPage;
+    const pages = res.totalPages ?? (res.total !== undefined ? Math.ceil(res.total / size) : undefined);
+    // Without a page count, a page that is not full is the last one.
+    const last = pages !== undefined ? page >= pages : res.items.length < size;
+    if (!res.items.length || last) return { items, complete: res.total === undefined || items.length >= res.total };
+  }
+  return { items, complete: false };
 }
 
 export const pmdbAdapter: TrackerAdapter = {
@@ -50,25 +72,28 @@ export const pmdbAdapter: TrackerAdapter = {
   async pull(account) {
     const apiKey = key(account);
     return guard(async () => {
-      const resume: PmdbResume[] = [];
-      for (let page = 1; page <= 20; page++) {
-        const res = await pmdb.resumePage(apiKey, page);
-        resume.push(...(res.items ?? []));
-        if (!res.items?.length || page >= (res.totalPages ?? 1)) break;
+      const incomplete: NonNullable<PullResult['incomplete']> = [];
+      const resumePages = await allPages<PmdbResume>((page) => pmdb.resumePage(apiKey, page), 20);
+      const resume = resumePages.items;
+      if (!resumePages.complete) incomplete.push('progress');
+      const watchedPages = await allPages<PmdbWatched>((page) => pmdb.watchedPage(apiKey, page), 100);
+      const watched = watchedPages.items;
+      if (!watchedPages.complete) incomplete.push('watched');
+      // The watchlist is extra: when it cannot be read the history still syncs, and the local
+      // watchlist is left as it is.
+      let wlItems: PmdbListItem[] | null = null;
+      try {
+        watchlistId = undefined;
+        const wlId = await listId(apiKey);
+        if (wlId) wlItems = await pmdb.listItems(apiKey, wlId);
+      } catch (e) {
+        if (e instanceof PmdbError && e.unauthorized) throw e;
+        incomplete.push('watchlist');
       }
-      const watched: PmdbWatched[] = [];
-      for (let page = 1; page <= 100; page++) {
-        const res = await pmdb.watchedPage(apiKey, page);
-        watched.push(...(res.items ?? []));
-        if (!res.items?.length || page >= (res.totalPages ?? 1)) break;
-      }
-      watchlistId = undefined;
-      const wlId = await listId(apiKey);
-      const wlItems = wlId ? await pmdb.listItems(apiKey, wlId).catch(() => []) : [];
 
       // One id lookup per title, a few at a time.
       const titles = new Map<string, { id: number; kind: 'movie' | 'tv' }>();
-      for (const x of [...resume, ...watched, ...wlItems]) titles.set(`${x.media_type}:${x.tmdb_id}`, { id: x.tmdb_id, kind: x.media_type });
+      for (const x of [...resume, ...watched, ...(wlItems ?? [])]) titles.set(`${x.media_type}:${x.tmdb_id}`, { id: x.tmdb_id, kind: x.media_type });
       const metaIds = new Map<string, string>();
       await pool([...titles.entries()], 6, async ([k, t]) => {
         metaIds.set(k, await metaIdFor(t.id, t.kind, apiKey));
@@ -107,14 +132,15 @@ export const pmdbAdapter: TrackerAdapter = {
         const episode = movie ? undefined : w.episode ?? undefined;
         return { key: watchKey(metaId, season, episode), metaId, type: movie ? 'movie' : 'series', season, episode, at: parsePmdbTime(w.watched_at) ?? 0, tmdbId: w.tmdb_id, synced: true };
       });
-      const watchlist: WatchlistEntry[] = wlItems.map((it) => ({
+      const watchlist: WatchlistEntry[] | undefined = wlItems?.map((it) => ({
         metaId: metaIds.get(`${it.media_type}:${it.tmdb_id}`)!,
         type: it.media_type === 'movie' ? 'movie' : 'series',
         name: it.title,
         poster: it.poster,
+        tmdbId: it.tmdb_id,
         addedAt: Date.parse(it.added_at ?? '') || undefined,
       }));
-      return { progress, watched: watchedEntries, watchlist, counts: { resume: resume.length, watched: watched.length } };
+      return { progress, watched: watchedEntries, watchlist, counts: { resume: resume.length, watched: watched.length }, incomplete };
     });
   },
 
@@ -125,7 +151,7 @@ export const pmdbAdapter: TrackerAdapter = {
         const e = h.progress[op.key];
         if (!e) return 'skip';
         const target = await targetFor(e, apiKey);
-        if (!target) return 'skip';
+        if (!target) return noTarget(e);
         try {
           const res = await pmdb.saveResume(apiKey, target, e.positionS * 1000, e.durationS * 1000);
           if (res.action === 'completed') await pmdb.markWatched(apiKey, target, Date.now());
@@ -142,7 +168,7 @@ export const pmdbAdapter: TrackerAdapter = {
         const w = h.watched[op.key];
         if (!w) return 'skip';
         const target = await targetFor(w, apiKey);
-        if (!target) return 'skip';
+        if (!target) return noTarget(w);
         await pmdb.markWatched(apiKey, target, w.at);
         const rid = resumeIds.get(op.key);
         if (rid) {
@@ -153,7 +179,7 @@ export const pmdbAdapter: TrackerAdapter = {
       }
       if (op.op === 'unwatched') {
         const target = await targetFor(op, apiKey);
-        if (!target) return 'skip';
+        if (!target) return noTarget(op);
         await pmdb.unmarkWatched(apiKey, target);
         return 'synced';
       }
@@ -169,19 +195,25 @@ export const pmdbAdapter: TrackerAdapter = {
 
   async watchlistAdd(account, t: TitleRef) {
     const apiKey = key(account);
-    await guard(async () => {
+    return guard(async (): Promise<PushResult> => {
       const id = await listId(apiKey);
-      const ids = await tmdbFor(t.metaId, t.type, apiKey);
-      if (id && ids) await pmdb.addListItem(apiKey, id, ids.id, ids.kind);
+      if (!id) return 'skip';
+      const target = await targetFor(t, apiKey);
+      if (!target) return noTarget(t);
+      await pmdb.addListItem(apiKey, id, target.tmdbId, target.mediaType);
+      return 'synced';
     });
   },
 
   async watchlistRemove(account, t: TitleRef) {
     const apiKey = key(account);
-    await guard(async () => {
+    return guard(async (): Promise<PushResult> => {
       const id = await listId(apiKey);
-      const ids = await tmdbFor(t.metaId, t.type, apiKey);
-      if (id && ids) await pmdb.removeListItem(apiKey, id, ids.id);
+      if (!id) return 'skip';
+      const target = await targetFor(t, apiKey);
+      if (!target) return noTarget(t);
+      await pmdb.removeListItem(apiKey, id, target.tmdbId);
+      return 'synced';
     });
   },
 };

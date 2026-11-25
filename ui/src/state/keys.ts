@@ -14,6 +14,18 @@ export function effectiveTmdbKey(): string | null {
   return useKeys.getState().tmdbApiKey ?? BUILT_IN_TMDB_KEY;
 }
 
+/**
+ * A short fingerprint of the key in use, for cache keys: answers fetched with one key (or
+ * refused for it) are not reused after the key changes. It is not the key and cannot be turned
+ * back into it.
+ */
+export function tmdbKeyId(key: string | null = effectiveTmdbKey()): string {
+  if (!key) return 'none';
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 interface KeysState {
   loaded: boolean;
   tmdbApiKey: string | null;

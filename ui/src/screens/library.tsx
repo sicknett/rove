@@ -2,8 +2,10 @@ import { useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { CalendarDays, CheckCircle2, FolderPlus, History as HistoryIcon, Library as LibraryIcon, Pencil, Trash2, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 import { fetchMeta } from '../addons/client';
+import { titleKey } from '../addons/ids';
 import type { MetaPreview } from '../addons/types';
 import { episodesOf, useCardArt, useContinueWatching } from '../data/hooks';
+import { airTime, hasAirClock } from '../library/continue';
 import { PosterGrid } from '../media/Grid';
 import { WideCard } from '../media/cards';
 import { navigate, useNav } from '../nav/router';
@@ -48,13 +50,21 @@ type Sort = 'added' | 'name';
 
 function Watchlist() {
   const library = useHistory((s) => s.library);
+  const cards = useHistory((s) => s.cards);
   const [sort, setSort] = useState<Sort>('added');
   const [type, setType] = useState<'all' | 'movie' | 'series'>('all');
   const items = useMemo(() => {
-    const list = Object.values(library).filter((i) => type === 'all' || i.type === type);
+    // An item a tracker sent may have no art of its own: the remembered card (which useCardArt
+    // fills in) completes it.
+    const list = Object.values(library)
+      .filter((i) => type === 'all' || i.type === type)
+      .map((i) => {
+        const c = cards[titleKey(i.metaId, i.type)];
+        return { ...i, name: i.name ?? c?.name, poster: i.poster ?? c?.poster, background: i.background ?? c?.background, year: i.year ?? c?.year };
+      });
     list.sort((a, b) => (sort === 'added' ? b.addedAt - a.addedAt : (a.name ?? '').localeCompare(b.name ?? '')));
     return list;
-  }, [library, sort, type]);
+  }, [library, cards, sort, type]);
   useCardArt(items);
   const previews: MetaPreview[] = items.map((i) => ({ id: i.metaId, type: i.type, name: i.name ?? '', poster: i.poster, background: i.background, releaseInfo: i.year }));
   if (!Object.keys(library).length) {
@@ -100,7 +110,7 @@ function ContinueGrid() {
     <div className="wide-grid">
       {items.map((it) => (
         <WideCard
-          key={it.metaId}
+          key={`${it.type}:${it.metaId}`}
           title={{ metaId: it.metaId, type: it.type, name: it.name, poster: it.poster, background: it.background, logo: it.logo }}
           image={it.still && it.kind === 'resume' ? it.still : it.background ?? it.still}
           subtitle={it.type === 'series' && it.season !== undefined ? `${it.kind === 'next' ? 'Next · ' : ''}S${it.season} E${it.episode}${it.episodeTitle ? ` · ${it.episodeTitle}` : ''}` : undefined}
@@ -121,15 +131,21 @@ function HistoryGrid() {
   const cards = useHistory((s) => s.cards);
   const [type, setType] = useState<'all' | 'movie' | 'series'>('all');
   const titles = useMemo(() => {
+    // One entry per title. A `tmdb:` id is a different title as a movie and as a show.
     const latest = new Map<string, { metaId: string; type: 'movie' | 'series'; at: number; count: number }>();
     for (const w of Object.values(watched)) {
-      const prev = latest.get(w.metaId);
-      latest.set(w.metaId, { metaId: w.metaId, type: w.type, at: Math.max(prev?.at ?? 0, w.at), count: (prev?.count ?? 0) + 1 });
+      const key = titleKey(w.metaId, w.type);
+      const prev = latest.get(key);
+      latest.set(key, { metaId: w.metaId, type: w.type, at: Math.max(prev?.at ?? 0, w.at), count: (prev?.count ?? 0) + 1 });
     }
     return [...latest.values()].filter((t) => type === 'all' || t.type === type).sort((a, b) => b.at - a.at);
   }, [watched, type]);
-  const withArt = titles.map((t) => ({ ...t, name: cards[t.metaId]?.name, poster: cards[t.metaId]?.poster }));
-  useCardArt(withArt.slice(0, 60));
+  const withArt = titles.map((t) => {
+    const c = cards[titleKey(t.metaId, t.type)];
+    return { ...t, name: c?.name, poster: c?.poster };
+  });
+  // The whole list: the art is fetched a few titles at a time, from the top (see useCardArt).
+  useCardArt(withArt);
   if (!titles.length) return <Empty icon={<HistoryIcon size={40} />} title="No history yet">Finished movies and episodes appear here. Connect PublicMetaDB in Settings to bring in your history.</Empty>;
   return (
     <>
@@ -257,7 +273,8 @@ export function Calendar() {
       if (!m) return;
       for (const ep of episodesOf(m)) {
         if (ep.season === 0 || !ep.released) continue;
-        const d = Date.parse(ep.released);
+        // A date with no time of day is that calendar day here, not midnight UTC (see airTime).
+        const d = airTime(ep.released);
         if (!Number.isFinite(d)) continue;
         const inRange = range === 'upcoming' ? d >= now - DAY && d <= now + 45 * DAY : d < now && d >= now - 21 * DAY;
         if (inRange) out.push({ date: d, metaId: shows[i], name: m.name, poster: m.poster, background: m.background, ep, meta: m });
@@ -321,7 +338,7 @@ export function Calendar() {
                           S{e.ep.season} E{e.ep.episode}
                           {e.ep.title ? ` · ${e.ep.title}` : ''}
                         </span>
-                        <span className="cal-item__time">{new Date(e.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+                        {hasAirClock(e.ep.released) && <span className="cal-item__time">{new Date(e.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>}
                       </button>
                     </article>
                   );

@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { CalendarDays, Compass, House, Library, Search, Settings as SettingsIcon } from 'lucide-react';
-import { mountedEntries, useNav, type Entry, type Route } from '../nav/router';
+import { mountedEntries, ScreenContext, useNav, type Entry, type Route } from '../nav/router';
 import { useProfiles } from '../state/profiles';
 import { useTracker } from '../tracking/sync';
 import { Avatar } from './Avatar';
@@ -82,7 +82,7 @@ function renderRoute(route: Route) {
 }
 
 /** One screen in its own scroller, kept mounted while it is in recent history. */
-const Screen = memo(function Screen({ entry, active }: { entry: Entry; active: boolean }) {
+const Screen = memo(function Screen({ entry, active, shown }: { entry: Entry; active: boolean; shown: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!active) return;
@@ -90,9 +90,21 @@ const Screen = memo(function Screen({ entry, active }: { entry: Entry; active: b
     window.addEventListener('rove:scroll-top', toTop);
     return () => window.removeEventListener('rove:scroll-top', toTop);
   }, [active]);
+
+  // New parameters under the same key (a Settings section, a Discover filter) are a new page in
+  // the same scroller: it starts at its top. Not the collection editor, where the parameter only
+  // opens a folder's dialog over the list.
+  const route = useRef(entry.route);
+  useLayoutEffect(() => {
+    if (route.current === entry.route) return;
+    route.current = entry.route;
+    if (entry.route.name !== 'collection-edit') ref.current?.scrollTo({ top: 0 });
+  }, [entry.route]);
+
+  const screen = useMemo(() => ({ key: entry.key, active: active && shown }), [entry.key, active, shown]);
   return (
     <div ref={ref} className={`screen ${active ? 'is-active' : ''}`} hidden={!active} data-route={entry.route.name}>
-      {renderRoute(entry.route)}
+      <ScreenContext.Provider value={screen}>{renderRoute(entry.route)}</ScreenContext.Provider>
     </div>
   );
 });
@@ -103,12 +115,15 @@ export function AppShell({ hidden }: { hidden: boolean }) {
   const stack = useNav((s) => s.stack);
   const index = useNav((s) => s.index);
   const current = stack[index];
-  const mounted = mountedEntries(stack, index);
+  // In key order, not history order: a tab's screen can move within history (goTab), and a
+  // scroller that React moves in the page loses its scroll position.
+  const mounted = mountedEntries(stack, index).sort((a, b) => a.key - b.key);
 
   // Mouse back/forward buttons and Alt+arrows.
   useEffect(() => {
     const onMouse = (e: MouseEvent) => {
-      if (hiddenRef.current) return;
+      // Not under a dialog or sheet: it would be left floating over another screen.
+      if (hiddenRef.current || document.querySelector('.overlay')) return;
       if (e.button === 3) (e.preventDefault(), useNav.getState().back());
       if (e.button === 4) (e.preventDefault(), useNav.getState().forward());
     };
@@ -120,6 +135,8 @@ export function AppShell({ hidden }: { hidden: boolean }) {
       else if ((e.ctrlKey && e.key.toLowerCase() === 'k') || (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA')) {
         e.preventDefault();
         useNav.getState().goTab({ name: 'search' });
+        // Already on Search, or coming back to it: the box takes the keyboard either way.
+        window.dispatchEvent(new CustomEvent('rove:focus-search'));
       } else if (e.key === 'Backspace' && tag !== 'INPUT' && tag !== 'TEXTAREA') useNav.getState().back();
     };
     window.addEventListener('mouseup', onMouse);
@@ -136,7 +153,7 @@ export function AppShell({ hidden }: { hidden: boolean }) {
       <Sidebar />
       <main className="shell__main">
         {mounted.map((e) => (
-          <Screen key={e.key} entry={e} active={e.key === current.key} />
+          <Screen key={e.key} entry={e} active={e.key === current.key} shown={!hidden} />
         ))}
       </main>
     </div>

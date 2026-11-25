@@ -133,7 +133,13 @@ impl Api {
                     .body(bytes)
                     .unwrap()
             }
-            Err(_) => text_response(404, "none"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => text_response(404, "none"),
+            // Present but unreadable (locked, disk error): not the same as "nothing saved yet", or
+            // the page would start empty and save that over the real file.
+            Err(e) => {
+                log::warn!("{name} could not be read: {e}");
+                text_response(500, "unreadable")
+            }
         }
     }
 

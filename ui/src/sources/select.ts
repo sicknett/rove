@@ -107,12 +107,19 @@ function regexOf(pattern: string | undefined): RegExp | null {
   }
 }
 
+/** The release these options ask to stay with: the one that played the previous episode. */
+function groupToFollow(o: AutoPickOptions): string | null {
+  // "First source" means the addon's top pick every time, whatever played before.
+  return o.mode !== 'off' && o.mode !== 'first' && o.preferBingeGroup !== false && o.bingeGroup ? o.bingeGroup : null;
+}
+
 /** The stream to start without asking, or null to show the picker. */
 export function autoPick(ordered: SourcedStream[], o: AutoPickOptions): SourcedStream | null {
   const playable = ordered.filter(isPlayable);
   if (!playable.length) return null;
-  if (o.preferBingeGroup !== false && o.bingeGroup) {
-    const same = playable.find((s) => s.behaviorHints?.bingeGroup === o.bingeGroup);
+  const group = groupToFollow(o);
+  if (group) {
+    const same = playable.find((s) => s.behaviorHints?.bingeGroup === group);
     if (same) return same;
   }
   switch (o.mode) {
@@ -128,6 +135,44 @@ export function autoPick(ordered: SourcedStream[], o: AutoPickOptions): SourcedS
       return re ? playable.find((s) => re.test(streamText(s))) ?? null : null;
     }
   }
+}
+
+export interface DecideInput extends AutoPickOptions {
+  /** Every stream found so far, in display order (see orderStreams). */
+  ordered: SourcedStream[];
+  /** The user's addon order, as given to orderStreams. */
+  addonOrder: string[];
+  /** Ids of the addons that have not answered yet. */
+  waiting: string[];
+  /** The wait for slower addons has run out. */
+  graceOver: boolean;
+}
+
+export type Decision = { action: 'play'; stream: SourcedStream } | { action: 'ask' } | { action: 'wait' };
+
+/**
+ * What to do while addons are still answering: start a stream, open the picker, or keep waiting.
+ * Play must not hang on the slowest addon, so a pick is taken as soon as the remaining addons
+ * cannot change it, and otherwise when the grace period ends.
+ */
+export function decide(i: DecideInput): Decision {
+  const pick = autoPick(i.ordered, i);
+  if (!i.waiting.length) return pick ? { action: 'play', stream: pick } : { action: 'ask' };
+  if (!pick) {
+    // Sources exist but none fits the rule: let the user choose instead of waiting for the rest.
+    return i.graceOver && i.ordered.some(isPlayable) ? { action: 'ask' } : { action: 'wait' };
+  }
+  const group = groupToFollow(i);
+  if (group && pick.behaviorHints?.bingeGroup === group) return { action: 'play', stream: pick };
+  if (i.graceOver) return { action: 'play', stream: pick };
+  // Before that, only a pick no slower addon can displace: none of them comes ahead of its addon
+  // in the user's order, and there is no previous release left to look for.
+  const pos = (id: string) => {
+    const p = i.addonOrder.indexOf(id);
+    return p < 0 ? 99 : p;
+  };
+  const displaceable = !!group || i.waiting.some((id) => pos(id) < pos(pick.addonId));
+  return displaceable ? { action: 'wait' } : { action: 'play', stream: pick };
 }
 
 export function isValidRegex(pattern: string): boolean {

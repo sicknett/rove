@@ -3,8 +3,8 @@
 
 import { watchKey } from '../../addons/ids';
 import type { ProgressEntry, WatchedEntry } from '../../state/history';
-import { idsFor, metaIdFromIds, timeOf, tmdbFromIds, trackerFetch } from '../http';
-import { TrackerError, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
+import { idsFor, metaIdFromIds, SCROBBLE_CAP_PERCENT, timeOf, tmdbFromIds, trackerFetch } from '../http';
+import { TrackerError, type PullResult, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
 
 const API = 'https://api.simkl.com';
 export const SIMKL_CLIENT_ID = (import.meta.env.VITE_SIMKL_CLIENT_ID as string | undefined)?.trim() || '';
@@ -132,20 +132,23 @@ export const simklAdapter: TrackerAdapter = {
   async pull(account) {
     const [all, playback] = await Promise.all([
       call<AllItems>(account, 'GET', '/sync/all-items/', undefined, { extended: 'full', episode_watched_at: 'yes' }),
-      call<Playback[]>(account, 'GET', '/sync/playback').catch(() => ({ data: [] as Playback[] })),
+      // Without the playback list the rest still syncs; local resume points are then left alone.
+      call<Playback[]>(account, 'GET', '/sync/playback').catch(() => null),
     ]);
+    const incomplete: NonNullable<PullResult['incomplete']> = [];
+    if (!Array.isArray(playback?.data)) incomplete.push('progress');
     const watched: WatchedEntry[] = [];
     const watchlist: WatchlistEntry[] = [];
     for (const m of all.data?.movies ?? []) {
       const metaId = metaIdFromIds(m.movie.ids);
       if (!metaId) continue;
       if (m.status === 'completed') watched.push({ key: metaId, metaId, type: 'movie', at: timeOf(m.last_watched_at), tmdbId: tmdbFromIds(m.movie.ids), synced: true });
-      if (m.status === 'plantowatch') watchlist.push({ metaId, type: 'movie', name: m.movie.title, year: m.movie.year ? String(m.movie.year) : undefined, addedAt: timeOf(m.added_to_watchlist_at) || undefined });
+      if (m.status === 'plantowatch') watchlist.push({ metaId, type: 'movie', name: m.movie.title, year: m.movie.year ? String(m.movie.year) : undefined, tmdbId: tmdbFromIds(m.movie.ids), addedAt: timeOf(m.added_to_watchlist_at) || undefined });
     }
     for (const s of [...(all.data?.shows ?? []), ...(all.data?.anime ?? [])]) {
       const metaId = metaIdFromIds(s.show.ids);
       if (!metaId) continue;
-      if (s.status === 'plantowatch') watchlist.push({ metaId, type: 'series', name: s.show.title, year: s.show.year ? String(s.show.year) : undefined, addedAt: timeOf(s.added_to_watchlist_at) || undefined });
+      if (s.status === 'plantowatch') watchlist.push({ metaId, type: 'series', name: s.show.title, year: s.show.year ? String(s.show.year) : undefined, tmdbId: tmdbFromIds(s.show.ids), addedAt: timeOf(s.added_to_watchlist_at) || undefined });
       for (const season of s.seasons ?? [])
         for (const ep of season.episodes) {
           watched.push({ key: watchKey(metaId, season.number, ep.number), metaId, type: 'series', season: season.number, episode: ep.number, at: timeOf(ep.watched_at ?? s.last_watched_at), tmdbId: tmdbFromIds(s.show.ids), synced: true });
@@ -153,7 +156,7 @@ export const simklAdapter: TrackerAdapter = {
     }
     playbackIds.clear();
     const progress: ProgressEntry[] = [];
-    for (const p of playback.data ?? []) {
+    for (const p of Array.isArray(playback?.data) ? playback.data : []) {
       const isMovie = p.type === 'movie';
       const owner = isMovie ? p.movie : p.show ?? p.anime;
       const metaId = metaIdFromIds(owner?.ids);
@@ -179,7 +182,7 @@ export const simklAdapter: TrackerAdapter = {
         synced: true,
       });
     }
-    return { progress, watched, watchlist, counts: { resume: progress.length, watched: watched.length } };
+    return { progress, watched, watchlist, counts: { resume: progress.length, watched: watched.length }, incomplete, resumeCap: SCROBBLE_CAP_PERCENT / 100 };
   },
 
   async push(account, op, h) {
@@ -187,7 +190,7 @@ export const simklAdapter: TrackerAdapter = {
       const e = h.progress[op.key];
       const b = e && itemBody(e);
       if (!b) return 'skip';
-      await call(account, 'POST', '/scrobble/pause', { ...b, progress: Math.min(79, Math.max(1, (e.positionS / e.durationS) * 100)) });
+      await call(account, 'POST', '/scrobble/pause', { ...b, progress: Math.min(SCROBBLE_CAP_PERCENT, Math.max(1, (e.positionS / e.durationS) * 100)) });
       return 'synced';
     }
     if (op.op === 'watched') {

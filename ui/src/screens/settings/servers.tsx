@@ -6,20 +6,22 @@ import { probeServer, signInWithPassword, startQuickConnect, type PublicInfo, ty
 import { pickConnection, plexServers, startPlexSignIn, type PlexPin, type PlexServerChoice } from '../../servers/plex';
 import { serverAdapter } from '../../servers';
 import { useServers } from '../../servers/store';
-import { SERVER_KIND_NAMES, type MediaServer, type ServerKind } from '../../servers/types';
+import { SERVER_KIND_NAMES, type MediaServer, type ServerKind, type ServerLibrary } from '../../servers/types';
 import { Button, Segmented, Switch, TextField } from '../../ui/controls';
 import { toast } from '../../ui/toast';
 import { Group, SettingRow } from './parts';
 
 type NewServer = Omit<MediaServer, 'id' | 'addedAt' | 'enabled'>;
 
-/** Saves a signed-in server with its libraries. */
+/** Saves a signed-in server with its libraries, and says so only as far as it went. */
 async function addServer(s: NewServer) {
-  const libraries = await serverAdapter(s.kind)
+  const libraries: ServerLibrary[] | null = await serverAdapter(s.kind)
     .libraries({ ...s, id: 'new', enabled: true, addedAt: 0 })
-    .catch(() => []);
-  useServers.getState().add({ ...s, libraries });
-  toast.success(`${s.name} added. Its libraries are on Home now.`);
+    .catch(() => null);
+  useServers.getState().add(libraries ? { ...s, libraries } : s);
+  if (!libraries) toast.info(`${s.name} added, but its libraries could not be read. Use Refresh to try again.`);
+  else if (!libraries.length) toast.info(`${s.name} added. It has no movie or show libraries yet.`);
+  else toast.success(`${s.name} added. Its libraries are on Home now.`);
 }
 
 export function ServersSection() {
@@ -31,8 +33,8 @@ export function ServersSection() {
         note="Titles on your servers show up on Home, in Search and as sources next to your addons, so the same movie or episode is one title whether it comes from a server or an addon. ROVE plays the original file directly and tells the server where you stopped. Sign-ins are stored encrypted for your Windows account and shared by every profile."
       >
         {servers.length === 0 && <SettingRow label="No servers yet" hint="Add a Jellyfin, Emby, Silo or Plex server below." />}
-        {servers.map((s) => (
-          <ServerRow key={s.id} server={s} />
+        {servers.map((s, i) => (
+          <ServerRow key={s.id} server={s} index={i} />
         ))}
       </Group>
       <AddServer />
@@ -40,15 +42,14 @@ export function ServersSection() {
   );
 }
 
-function ServerRow({ server }: { server: MediaServer }) {
+function ServerRow({ server, index }: { server: MediaServer; index: number }) {
   const [busy, setBusy] = useState(false);
   const store = useServers.getState();
   const libs = server.libraries ?? [];
   const refresh = async () => {
     setBusy(true);
     try {
-      const libraries = await serverAdapter(server.kind).libraries(server);
-      store.update(server.id, { libraries });
+      const libraries = await store.refresh(server.id);
       toast.success(`${server.name}: ${libraries.length} ${libraries.length === 1 ? 'library' : 'libraries'}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : `${server.name} could not be reached.`);
@@ -70,7 +71,7 @@ function ServerRow({ server }: { server: MediaServer }) {
         icon={<Trash2 size={16} />}
         onClick={() => {
           store.remove(server.id);
-          toast.info(`${server.name} removed`, { label: 'Undo', run: () => useServers.getState().add(server) });
+          toast.info(`${server.name} removed`, { label: 'Undo', run: () => useServers.getState().restore(server, index) });
         }}
       >
         Remove
@@ -256,7 +257,7 @@ function PlexSignIn() {
     setError(null);
     try {
       const url = await pickConnection(c);
-      await addServer({ kind: 'plex', name: c.name, url, token: c.token, machineId: c.machineId });
+      await addServer({ kind: 'plex', name: c.name, url, token: c.token, machineId: c.machineId, connections: c.connections });
     } catch (e) {
       setError(e instanceof Error ? e.message : `${c.name} could not be reached.`);
     } finally {
@@ -293,7 +294,7 @@ function PlexSignIn() {
           return (
             <SettingRow key={c.machineId} label={c.name} hint={`${c.owned ? 'Your server' : 'Shared with you'} · ${c.connections.length} address${c.connections.length === 1 ? '' : 'es'}`}>
               <Button variant={added ? 'ghost' : 'primary'} icon={<Server size={16} />} busy={busy === c.machineId} disabled={!!busy} onClick={() => void choose(c)}>
-                {added ? 'Add again' : 'Add'}
+                {added ? 'Update' : 'Add'}
               </Button>
             </SettingRow>
           );

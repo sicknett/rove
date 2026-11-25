@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { ArrowRight, Check, FileUp, Plus } from 'lucide-react';
 import { useAddons } from '../addons/store';
+import { ReplaceAddonDialog, useAddonInstall } from './settings/addons';
 import { readBackup, restoreBackup } from '../lib/backup';
 import { Button, TextField } from '../ui/controls';
 import { Img } from '../ui/Img';
@@ -11,24 +12,9 @@ import wallpaperUrl from '../assets/wallpaper.png';
 /** First start with no addons: add addon links, or restore a ROVE backup from another PC. */
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [link, setLink] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const adding = useAddonInstall(() => setLink(''));
   const addons = useAddons((s) => s.addons);
   const file = useRef<HTMLInputElement>(null);
-
-  const add = async () => {
-    setAdding(true);
-    setError(null);
-    try {
-      const a = await useAddons.getState().add(link);
-      setLink('');
-      toast.success(`${a.manifest.name} installed`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'That addon could not be added.');
-    } finally {
-      setAdding(false);
-    }
-  };
 
   const restore = async (f: File) => {
     try {
@@ -53,8 +39,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         <div className="onboarding__option onboarding__option--stack">
           <div className="inline-form">
-            <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" error={error} onKeyDown={(e) => e.key === 'Enter' && link.trim() && void add()} autoFocus />
-            <Button variant="primary" icon={<Plus size={16} />} busy={adding} disabled={!link.trim()} onClick={() => void add()}>
+            <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" error={adding.error} onKeyDown={(e) => e.key === 'Enter' && void adding.install(link)} autoFocus />
+            <Button variant="primary" icon={<Plus size={16} />} busy={adding.busy} disabled={!link.trim()} onClick={() => void adding.install(link)}>
               Add
             </Button>
           </div>
@@ -89,6 +75,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           </Button>
         </div>
       </div>
+      <ReplaceAddonDialog state={adding} />
     </main>
   );
 }

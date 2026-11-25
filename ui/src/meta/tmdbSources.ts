@@ -24,6 +24,7 @@ function preview(item: TmdbListItem, fallbackKind: 'movie' | 'tv'): MetaPreview 
   };
 }
 
+/** Collection filter names and the /discover/movie parameters they stand for. */
 const FILTER_PARAMS: Record<string, string> = {
   withGenres: 'with_genres',
   withoutGenres: 'without_genres',
@@ -44,6 +45,12 @@ const FILTER_PARAMS: Record<string, string> = {
   withWatchProviders: 'with_watch_providers',
   withoutWatchProviders: 'without_watch_providers',
 };
+
+/** /discover/tv names a few of them differently; a movie name it does not know is ignored. */
+function tvParam(name: string): string {
+  if (name === 'year') return 'first_air_date_year';
+  return name.replace('primary_release_date', 'first_air_date');
+}
 
 /** One page (1-based) of a TMDB collection source. */
 export async function fetchTmdbSource(source: CollectionSource, page = 1): Promise<MetaPreview[]> {
@@ -84,7 +91,7 @@ export async function fetchTmdbSource(source: CollectionSource, page = 1): Promi
         if (v === null || v === undefined || v === '') continue;
         const name = FILTER_PARAMS[k];
         if (!name) continue;
-        params[kind === 'tv' ? name.replace('primary_release_date', 'first_air_date') : name] = String(v);
+        params[kind === 'tv' ? tvParam(name) : name] = String(v);
       }
       const r = await tmdb<{ results?: TmdbListItem[] }>(`/discover/${kind}`, params);
       return map(r?.results);

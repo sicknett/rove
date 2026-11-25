@@ -11,7 +11,7 @@ import { startSync, useTracker } from './tracking/sync';
 import { Player } from './player/Player';
 import { SourcesSheet } from './player/SourcesSheet';
 import { FindingOverlay, ResumeDialog } from './player/PlaybackDialogs';
-import { loadLinks, startStream, usePlayback } from './player/session';
+import { leaveVideo, loadLinks, startStream, usePlayback } from './player/session';
 import { applyPlayerSettings, loadTrackMemory } from './player/prefs';
 import { onOpenRequest, startListening } from './player/store';
 import { titleFromUrl } from './format';
@@ -26,12 +26,14 @@ import { useNav } from './nav/router';
 import { ProfilePicker } from './screens/ProfilePicker';
 import { Onboarding } from './screens/Onboarding';
 import { ContextMenuHost } from './ui/contextmenu';
-import { ToastViewport } from './ui/toast';
+import { ToastViewport, toast } from './ui/toast';
 import logoUrl from './assets/rove-logo.png';
 import { useServers } from './servers/store';
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, refetchOnReconnect: true } },
+  // No retry here: requests already retry once below (lib/http), and two layers of retries kept a
+  // dead addon's rows on their loading placeholders for minutes.
+  defaultOptions: { queries: { retry: 0, refetchOnWindowFocus: false, refetchOnReconnect: true } },
 });
 
 
@@ -46,6 +48,18 @@ async function loadProfile() {
     loadLinks(),
     loadTrackMemory(),
   ]);
+}
+
+/**
+ * The volume the user left, when the profile asks for it to be remembered (so only once its
+ * settings are loaded). Nothing stored leaves mpv's default; a stored 0 is a volume like any other.
+ */
+function restoreVolume() {
+  const s = useSettings.getState().settings;
+  const stored = localStorage.getItem('rove.volume');
+  if (!s.playback.rememberVolume || stored === null) return;
+  const volume = Number(stored);
+  if (Number.isFinite(volume) && volume >= 0) mpv.set('volume', Math.min(volume, 150, s.audio.volumeMax));
 }
 
 function Splash() {
@@ -75,7 +89,16 @@ export function App() {
   useEffect(() => {
     const stop = startListening();
     const unsubClose = subscribe((m) => {
-      if ((m as { t: string }).t === 'closing') void flushAll().finally(() => send({ t: 'close-ready' }));
+      if (m.t === 'external-player') return void (m.ok ? toast.info(m.text) : toast.error(m.text));
+      if ((m as { t: string }).t !== 'closing') return;
+      // The window is hidden by now; the sound stops with it.
+      if (usePlayback.getState().session) mpv.set('pause', true);
+      // What was playing gets its last position saved (and queued for the tracker) before the
+      // documents are written, and a media server its stop report. The report is given a moment
+      // to leave; the shell waits two seconds for all of this at most.
+      const reported = leaveVideo();
+      const moment = new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+      void Promise.all([flushAll(), Promise.race([reported, moment])]).finally(() => send({ t: 'close-ready' }));
     });
     send({ t: 'ready' });
     void useProfiles.getState().load();
@@ -83,14 +106,18 @@ export function App() {
     void useServers.getState().load();
     void useKeys.getState().load();
     void loadIdMap();
-    void docs.read<boolean>('onboarded').then((v) => setOnboarded(!!v));
+    // A read that fails counts as "not set up yet", so the splash cannot stay up for good. It is
+    // the safe side: setup only ever shows while no addon is installed, so an existing
+    // installation goes to Home either way.
+    void docs.read<boolean>('onboarded').then(
+      (v) => setOnboarded(!!v),
+      () => setOnboarded(false),
+    );
     // `rove.exe --play <link>`: play a bare link (used for checks and quick tests).
     const offOpen = onOpenRequest((e) => {
       const name = e.title ?? titleFromUrl(e.url);
       startStream({ type: 'movie', metaId: `link:${e.url}`, videoId: e.url, name }, { url: e.url, addonId: 'link', addonName: 'Link', rank: 0 }, 0);
     });
-    const volume = Number(localStorage.getItem('rove.volume'));
-    if (volume > 0) mpv.set('volume', volume);
     return () => {
       stop();
       unsubClose();
@@ -107,6 +134,7 @@ export function App() {
     void loadProfile().then(() => {
       if (!alive) return;
       applyPlayerSettings();
+      restoreVolume();
       void seedDefaultCollections();
       stopSync = startSync();
       useNav.setState({ stack: [{ key: Date.now(), route: { name: 'home' } }], index: 0 });

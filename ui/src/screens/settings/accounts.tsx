@@ -6,6 +6,7 @@ import { connectMdblist, connectPmdb, startDeviceSignIn, type DeviceSignIn } fro
 import { trackerAvailable } from '../../tracking/adapters';
 import type { TrackerId } from '../../tracking/types';
 import { BUILT_IN_TMDB_KEY, useKeys } from '../../state/keys';
+import { checkTmdbKey } from '../../meta/tmdb';
 import { Button, Segmented, TextField } from '../../ui/controls';
 import { toast } from '../../ui/toast';
 import { Group, SettingRow } from './parts';
@@ -186,6 +187,29 @@ function TmdbCard() {
   const current = useKeys((s) => s.tmdbApiKey);
   const setKey = useKeys((s) => s.setTmdbApiKey);
   const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // TMDB is asked about the key before it is saved. A key it refuses would replace ROVE's own
+  // and quietly switch off art, cast and trailers.
+  const save = async () => {
+    if (busy || !value.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const accepted = await checkTmdbKey(value).catch(() => null);
+      if (accepted === null) return setError('TMDB could not be reached to check the key. Try again.');
+      if (!accepted) return setError('TMDB did not accept that key. Copy the API key or the read token again.');
+      await setKey(value);
+      setValue('');
+      toast.success('TMDB key saved');
+    } catch {
+      setError('The key could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Group
       title="TMDB"
@@ -204,16 +228,8 @@ function TmdbCard() {
       ) : (
         <SettingRow label={BUILT_IN_TMDB_KEY ? 'Using ROVE’s key' : 'API key or read token'} hint={BUILT_IN_TMDB_KEY ? 'Paste your own key below to use it instead' : undefined} stacked>
           <div className="inline-form">
-            <TextField value={value} onChange={setValue} secret placeholder="Paste your TMDB key" />
-            <Button
-              variant="primary"
-              disabled={!value.trim()}
-              onClick={() => {
-                void setKey(value);
-                setValue('');
-                toast.success('TMDB key saved');
-              }}
-            >
+            <TextField value={value} onChange={(v) => (setValue(v), setError(null))} secret placeholder="Paste your TMDB key" error={error} onKeyDown={(e) => e.key === 'Enter' && void save()} />
+            <Button variant="primary" busy={busy} disabled={!value.trim()} onClick={() => void save()}>
               Save
             </Button>
           </div>

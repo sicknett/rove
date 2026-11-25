@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bookmark, BookmarkCheck, CheckCircle2, CircleSlash, Clapperboard, Clock, ListVideo, MoreHorizontal, Play, RotateCcw, Star } from 'lucide-react';
-import { watchKey } from '../../addons/ids';
+import { isImdbId, titleKey, watchKey } from '../../addons/ids';
 import type { Meta } from '../../addons/types';
 import { asMediaType, episodesOf, useMeta, useTmdb } from '../../data/hooks';
-import type { EpisodeRef } from '../../library/continue';
+import { airTime, type EpisodeRef } from '../../library/continue';
 import { toggleWatchlist } from '../../library/watchlist';
 import { navigate, useNav } from '../../nav/router';
-import { movieTarget, pickEpisode, playEpisode } from '../../player/launch';
-import { play } from '../../player/session';
+import { pickEpisode, playEpisode, playMovie, resumePoint } from '../../player/launch';
 import { useHistory } from '../../state/history';
+import { useSettings } from '../../state/settings';
 import { tmdbImage } from '../../meta/tmdb';
-import { metaIdFor } from '../../tracking/idmap';
+import { metaIdFor, tmdbFor, useCanonicalId } from '../../tracking/idmap';
 import { useTracker } from '../../tracking/sync';
 import { Button, Dialog, Empty, IconButton, Menu, ProgressLine, Skeleton } from '../../ui/controls';
 import { Img } from '../../ui/Img';
@@ -42,21 +42,42 @@ export function Title({ type, id, season: initialSeason }: { type: string; id: s
     };
   }, [id, type, mediaType, replace, initialSeason]);
 
+  // The id everything about this title is kept under in history (resume point, watched marks,
+  // watchlist): the IMDb id when it maps, whichever id the card that led here carried.
+  const historyId = useCanonicalId(id, mediaType);
+
+  // History from a tracker may still sit under this title's `tmdb:` id. Learning which TMDB
+  // title an IMDb id is moves those entries here (the history store listens to the id map).
+  useEffect(() => {
+    if (isImdbId(id)) void tmdbFor(id, mediaType).catch(() => null);
+  }, [id, mediaType]);
+
   const metaQ = useMeta(type, id);
   const tmdbQ = useTmdb(type, id);
   const meta = metaQ.data;
   const tm = tmdbQ.data;
 
   useEffect(() => {
-    if (meta) useHistory.getState().rememberCard(id, mediaType, { name: meta.name, poster: meta.poster, background: meta.background, logo: meta.logo ?? tm?.logo, year: meta.releaseInfo });
-  }, [meta, tm?.logo, id, mediaType]);
+    if (meta) useHistory.getState().rememberCard(historyId, mediaType, { name: meta.name, poster: meta.poster, background: meta.background, logo: meta.logo ?? tm?.logo, year: meta.releaseInfo });
+  }, [meta, tm?.logo, historyId, mediaType]);
 
   if (metaQ.isLoading) return <TitleSkeleton />;
   if (!meta) {
+    // An error is a metadata addon that did not answer; no error and no data is "nobody knows it".
     return (
       <div className="screen-pad">
-        <Empty icon={<Clapperboard size={40} />} title="This title could not be loaded">
-          None of your metadata addons know it, or they did not answer. Check Settings → Addons.
+        <Empty
+          icon={<Clapperboard size={40} />}
+          title="This title could not be loaded"
+          action={
+            metaQ.isError ? (
+              <Button variant="primary" busy={metaQ.isFetching} onClick={() => void metaQ.refetch()}>
+                Try again
+              </Button>
+            ) : undefined
+          }
+        >
+          {metaQ.isError ? 'Your metadata addons did not answer. Check your connection, or Settings → Addons.' : 'None of your metadata addons know it. Check Settings → Addons.'}
         </Empty>
       </div>
     );
@@ -69,7 +90,7 @@ export function Title({ type, id, season: initialSeason }: { type: string; id: s
   const genres = meta.genres?.length ? meta.genres : tm?.details?.genres?.map((g) => g.name) ?? [];
   const runtime = runtimeLabel(meta, tm?.details?.runtime ?? tm?.details?.episode_run_time?.[0]);
   const overview = meta.description ?? tm?.details?.overview;
-  const card = { metaId: id, type: mediaType, name: meta.name, poster: meta.poster, background: meta.background, logo, year };
+  const card = { metaId: historyId, type: mediaType, name: meta.name, poster: meta.poster, background: meta.background, logo, year };
 
   return (
     <div className="title">
@@ -97,10 +118,10 @@ export function Title({ type, id, season: initialSeason }: { type: string; id: s
         </div>
         {tm?.details?.tagline && <p className="title__tagline">{tm.details.tagline}</p>}
         {overview && <p className="title__overview">{overview}</p>}
-        <TitleActions meta={meta} id={id} type={mediaType} card={card} trailer={tm?.trailer} />
+        <TitleActions meta={meta} id={historyId} type={mediaType} card={card} trailer={tm?.trailer} />
       </header>
 
-      {mediaType === 'series' && <Episodes meta={meta} id={id} initialSeason={initialSeason} />}
+      {mediaType === 'series' && <Episodes meta={meta} id={historyId} initialSeason={initialSeason} />}
 
       <Credits id={id} type={type} meta={meta} />
       <MoreLikeThis id={id} type={type} />
@@ -124,31 +145,36 @@ function TitleSkeleton() {
   );
 }
 
+/** `id` is the title's history id (see Title). */
 function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: string; type: 'movie' | 'series'; card: Parameters<typeof toggleWatchlist>[0]; trailer?: string }) {
   const progress = useHistory((s) => s.progress);
   const watched = useHistory((s) => s.watched);
-  const inList = useHistory((s) => !!s.library[id]);
+  const inList = useHistory((s) => !!s.library[titleKey(id, type)]);
+  // "Always start from the beginning" means Play never resumes, so it must not say it will.
+  const resumes = useSettings((s) => s.settings.playback.resume !== 'start');
   const [trailerOpen, setTrailerOpen] = useState(false);
 
+  // What Play will do. The label follows the same rule as the launch (resumePoint), and the
+  // watched marks are part of it: marking an episode moves on to the next.
   const plan = useMemo(() => {
+    const describe = (p: ReturnType<typeof resumePoint>) => ({ detail: p && !p.estimated ? formatRemaining(p.durationS - p.positionS) : undefined, progress: p ? p.positionS / p.durationS : undefined });
     if (type === 'movie') {
-      const p = progress[id];
-      return { label: p ? 'Resume' : 'Play', detail: p ? formatRemaining(p.durationS - p.positionS) : undefined, progress: p ? p.positionS / p.durationS : undefined, ep: undefined as EpisodeRef | undefined };
+      const p = resumes ? resumePoint(progress, id) : null;
+      return { label: p ? 'Resume' : 'Play', ...describe(p), ep: undefined as EpisodeRef | undefined };
     }
     const pick = pickEpisode(meta, id);
     if (!pick) return { label: 'Play', detail: undefined, progress: undefined, ep: undefined };
-    const p = progress[watchKey(id, pick.ep.season, pick.ep.episode)];
-    return {
-      label: `${p ? 'Resume' : 'Play'} S${pick.ep.season} E${pick.ep.episode}`,
-      detail: p ? formatRemaining(p.durationS - p.positionS) : pick.ep.title,
-      progress: p ? p.positionS / p.durationS : undefined,
-      ep: pick.ep,
-    };
-  }, [type, progress, id, meta]);
+    const p = resumes ? resumePoint(progress, id, pick.ep.season, pick.ep.episode) : null;
+    const about = describe(p);
+    return { label: `${p ? 'Resume' : 'Play'} S${pick.ep.season} E${pick.ep.episode}`, detail: about.detail ?? pick.ep.title, progress: about.progress, ep: pick.ep };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, progress, watched, id, meta, resumes]);
 
-  const start = async (choose = false, fromStart = false) => {
-    if (type === 'movie') return play(await movieTarget(meta, id, card), { meta, choose, fromStart });
-    if (plan.ep) return playEpisode(meta, id, plan.ep, { choose, fromStart });
+  const start = (choose = false, fromStart = false) => {
+    if (type === 'movie') return void playMovie(meta, id, card, { choose, fromStart });
+    if (plan.ep) return void playEpisode(meta, id, plan.ep, { choose, fromStart });
+    // A show whose metadata lists no episodes: say so instead of a button that does nothing.
+    toast.info('This show has no episodes listed yet, so there is nothing to play.');
   };
 
   const movieWatched = type === 'movie' && !!watched[id];
@@ -156,7 +182,7 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
 
   return (
     <div className="title__actions">
-      <Button variant="primary" size="lg" className="title__play" icon={<Play size={19} fill="currentColor" strokeWidth={0} />} onClick={() => void start()}>
+      <Button variant="primary" size="lg" className="title__play" icon={<Play size={19} fill="currentColor" strokeWidth={0} />} onClick={() => start()}>
         <span className="title__play-text">
           <span>{plan.label}</span>
           {plan.detail && <span className="title__play-detail">{plan.detail}</span>}
@@ -167,7 +193,7 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
           </span>
         )}
       </Button>
-      <Button variant="secondary" size="lg" icon={<ListVideo size={18} />} onClick={() => void start(true)}>
+      <Button variant="secondary" size="lg" icon={<ListVideo size={18} />} onClick={() => start(true)}>
         Sources
       </Button>
       {trailer && (
@@ -185,7 +211,7 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
           </IconButton>
         )}
         items={[
-          ...(plan.progress !== undefined ? [{ label: 'Play from the beginning', icon: <RotateCcw size={16} />, onSelect: () => void start(false, true) }] : []),
+          ...(plan.progress !== undefined ? [{ label: 'Play from the beginning', icon: <RotateCcw size={16} />, onSelect: () => start(false, true) }] : []),
           type === 'movie'
             ? {
                 label: movieWatched ? 'Mark as unwatched' : 'Mark as watched',
@@ -196,9 +222,9 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
                 label: 'Mark every aired episode watched',
                 icon: <CheckCircle2 size={16} />,
                 onSelect: () => {
-                  const eps = episodesOf(meta).filter((e) => e.season > 0 && (!e.released || Date.parse(e.released) <= Date.now()));
-                  h.markWatched(eps.map((e) => ({ metaId: id, type, season: e.season, episode: e.episode })));
-                  toast.success(`${eps.length} episodes marked watched`);
+                  const eps = unwatchedOf(id, episodesOf(meta).filter((e) => e.season > 0 && hasAired(e, Date.now())));
+                  if (eps.length) h.markWatched(eps.map((e) => ({ metaId: id, type, season: e.season, episode: e.episode })));
+                  toast.success(eps.length ? `${eps.length} episode${eps.length > 1 ? 's' : ''} marked watched` : 'Every aired episode is already marked watched');
                 },
               },
           ...(type === 'series'
@@ -227,6 +253,22 @@ function TitleActions({ meta, id, type, card, trailer }: { meta: Meta; id: strin
   );
 }
 
+/** An episode with no date counts as aired: only a date in the future holds it back. */
+function hasAired(e: EpisodeRef, now: number) {
+  const at = airTime(e.released);
+  return !Number.isFinite(at) || at <= now;
+}
+
+/**
+ * The episodes of `list` not marked watched yet. Marking several at once leaves the ones already
+ * watched alone: their dates stay, and the tracker does not count another play of each.
+ */
+function unwatchedOf(id: string, list: EpisodeRef[]): EpisodeRef[] {
+  const watched = useHistory.getState().watched;
+  return list.filter((e) => !watched[watchKey(id, e.season, e.episode)]);
+}
+
+/** `id` is the title's history id (see Title). */
 function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initialSeason?: number }) {
   const episodes = useMemo(() => episodesOf(meta), [meta]);
   const seasons = useMemo(() => [...new Set(episodes.map((e) => e.season))].sort((a, b) => (a === 0 ? 1 : b === 0 ? -1 : a - b)), [episodes]);
@@ -241,7 +283,9 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
 
   if (!episodes.length) return null;
 
-  const seasonWatched = list.length > 0 && list.every((e) => watched[watchKey(id, e.season, e.episode)]);
+  // Over what has aired: a season still running is "watched" once every episode out so far is.
+  const aired = list.filter((e) => hasAired(e, now));
+  const seasonWatched = aired.length > 0 && aired.every((e) => watched[watchKey(id, e.season, e.episode)]);
   return (
     <section className="episodes" aria-label="Episodes">
       <header className="episodes__head">
@@ -257,7 +301,8 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
           size="sm"
           icon={seasonWatched ? <CircleSlash size={16} /> : <CheckCircle2 size={16} />}
           onClick={() => {
-            const items = list.filter((e) => !e.released || Date.parse(e.released) <= now).map((e) => ({ metaId: id, type: 'series' as const, season: e.season, episode: e.episode }));
+            const items = (seasonWatched ? aired : unwatchedOf(id, aired)).map((e) => ({ metaId: id, type: 'series' as const, season: e.season, episode: e.episode }));
+            if (!items.length) return;
             if (seasonWatched) h.unmarkWatched(items);
             else h.markWatched(items);
           }}
@@ -270,7 +315,8 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
           const key = watchKey(id, e.season, e.episode);
           const p = progress[key];
           const isWatched = !!watched[key];
-          const released = e.released ? Date.parse(e.released) : NaN;
+          // A calendar day in local time (see airTime), so it shows as the date the addon gave.
+          const released = airTime(e.released);
           const upcoming = Number.isFinite(released) && released > now;
           const v = meta.videos?.find((x) => x.id === e.id);
           const isNext = pick?.ep.id === e.id;
@@ -292,8 +338,8 @@ function Episodes({ meta, id, initialSeason }: { meta: Meta; id: string; initial
                     label: 'Mark watched up to here',
                     icon: <CheckCircle2 size={16} />,
                     onSelect: () => {
-                      const upto = episodes.filter((x) => x.season > 0 && (x.season < e.season || (x.season === e.season && x.episode <= e.episode)));
-                      h.markWatched(upto.map((x) => ({ metaId: id, type: 'series', season: x.season, episode: x.episode })));
+                      const upto = unwatchedOf(id, episodes.filter((x) => x.season > 0 && (x.season < e.season || (x.season === e.season && x.episode <= e.episode))));
+                      if (upto.length) h.markWatched(upto.map((x) => ({ metaId: id, type: 'series', season: x.season, episode: x.episode })));
                     },
                   },
                 ])

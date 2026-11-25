@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Camera, ImagePlus, Lock, Plus, Trash2 } from 'lucide-react';
 import { toast } from '../../ui/toast';
 import { AVATAR_COLORS, MAX_PROFILES, useProfiles, type Profile } from '../../state/profiles';
@@ -44,13 +44,47 @@ export function ProfilesSection() {
   );
 }
 
+/** Asks for a profile's PIN: to open the profile, or before it can be edited. */
+export function PinDialog({ profile, onClose, onOk }: { profile: Profile; onClose: () => void; onOk: () => void }) {
+  const [digits, setDigits] = useState('');
+  const [wrong, setWrong] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    if (digits.length !== 4) return;
+    if (digits === profile.pin) onOk();
+    else {
+      setWrong(true);
+      const t = window.setTimeout(() => (setDigits(''), setWrong(false)), 600);
+      return () => window.clearTimeout(t);
+    }
+  }, [digits, profile.pin, onOk]);
+  return (
+    <Dialog open onClose={onClose} title={`PIN for ${profile.name}`} width={380}>
+      <div className={`pin ${wrong ? 'is-wrong' : ''}`} onClick={() => input.current?.focus()}>
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} className={`pin__dot ${i < digits.length ? 'is-filled' : ''}`} />
+        ))}
+        <input ref={input} className="pin__input" inputMode="numeric" value={digits} aria-label="PIN" onChange={(e) => setDigits(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+      </div>
+    </Dialog>
+  );
+}
+
 export function ProfileEditor({ profile, onClose }: { profile: Profile | null; onClose: () => void }) {
   const { create, update, remove, profiles } = useProfiles.getState();
+  const hasPin = !!profile?.pin;
+  // A profile behind a PIN is changed (or unlocked, or deleted) only by someone who knows the PIN.
+  const [unlocked, setUnlocked] = useState(!hasPin);
   const [name, setName] = useState(profile?.name ?? '');
   const [color, setColor] = useState(profile?.color ?? AVATAR_COLORS[profiles.length % AVATAR_COLORS.length]);
-  const [pin, setPin] = useState(profile?.pin ?? '');
+  // The saved PIN never goes into the field, which can be shown: the field takes a new one, and
+  // left empty keeps what is saved.
+  const [pin, setPin] = useState('');
+  const [removePin, setRemovePin] = useState(false);
   const [kids, setKids] = useState(profile?.kids ?? false);
   const [image, setImage] = useState<string | undefined>(profile?.image);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const photoInput = useRef<HTMLInputElement>(null);
   const pickPhoto = async (f: File) => {
     try {
@@ -59,14 +93,46 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile | null; o
       toast.error(e instanceof Error ? e.message : 'That image could not be used.');
     }
   };
-  const pinOk = pin === '' || /^\d{4}$/.test(pin);
+  const pinOk = removePin || pin === '' || /^\d{4}$/.test(pin);
   const save = () => {
     if (!name.trim() || !pinOk) return;
-    const data = { name: name.trim(), color, pin: pin || undefined, kids, image };
+    const data = { name: name.trim(), color, pin: removePin ? undefined : pin || profile?.pin, kids, image };
     if (profile) update(profile.id, data);
     else create(data);
     onClose();
   };
+
+  if (profile && !unlocked) return <PinDialog profile={profile} onClose={onClose} onOk={() => setUnlocked(true)} />;
+
+  if (profile && confirmDelete)
+    return (
+      <Dialog
+        open
+        onClose={() => setConfirmDelete(false)}
+        title={`Delete ${profile.name}?`}
+        width={440}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                remove(profile.id);
+                onClose();
+                toast.success(`${profile.name} deleted`);
+              }}
+            >
+              Delete profile
+            </Button>
+          </>
+        }
+      >
+        <p className="dialog__text">Its settings, Home layout, collections, watch history and tracker sign-in are removed from this PC. This cannot be undone.</p>
+      </Dialog>
+    );
+
   return (
     <Dialog
       open
@@ -76,7 +142,7 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile | null; o
       footer={
         <>
           {profile && profiles.length > 1 && (
-            <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => (remove(profile.id), onClose())}>
+            <Button variant="danger" icon={<Trash2 size={16} />} onClick={() => setConfirmDelete(true)}>
               Delete
             </Button>
           )}
@@ -119,7 +185,22 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile | null; o
             ))}
           </div>
         </div>
-        <TextField label="PIN (optional)" value={pin} onChange={(v) => setPin(v.replace(/\D/g, '').slice(0, 4))} secret error={pinOk ? null : 'Four digits'} hint="Asked when opening this profile" trailing={<Lock size={15} className="field__icon" />} />
+        <TextField
+          label={hasPin ? 'New PIN (optional)' : 'PIN (optional)'}
+          value={removePin ? '' : pin}
+          onChange={(v) => setPin(v.replace(/\D/g, '').slice(0, 4))}
+          secret
+          disabled={removePin}
+          error={pinOk ? null : 'Four digits'}
+          hint={hasPin ? 'A PIN is set. Leave this empty to keep it.' : 'Asked when opening this profile'}
+          trailing={<Lock size={15} className="field__icon" />}
+        />
+        {hasPin && (
+          <label className="check-row">
+            <Switch checked={removePin} onChange={setRemovePin} label="Remove the PIN" />
+            <span>Remove the PIN</span>
+          </label>
+        )}
         <label className="check-row">
           <Switch checked={kids} onChange={setKids} label="Kids profile" />
           <span>Kids profile: hides addon content marked for adults</span>

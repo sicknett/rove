@@ -43,6 +43,19 @@ describe('track choice', () => {
     expect(chooseTracks(tracks, settings({ audio: ['en'] }), { subOff: true }).sid).toBe(1);
   });
 
+  it('finds a remembered track that has no language tag by its title', () => {
+    const t: Track[] = [
+      { id: 1, type: 'audio', lang: 'eng', default: true },
+      { id: 2, type: 'audio', title: 'Original' },
+      { id: 5, type: 'sub', lang: 'eng', title: 'English (Forced)', forced: true },
+      { id: 6, type: 'sub', title: 'Signs & Songs' },
+    ];
+    const r = chooseTracks(t, settings({ audio: ['en'] }), { audioLang: undefined, audioTitle: 'Original', subLang: undefined, subTitle: 'Signs & Songs' });
+    expect(r).toEqual({ aid: 2, sid: 6 });
+    // A file without that track falls back to the language rules.
+    expect(chooseTracks(tracks, settings({ audio: ['en'] }), { audioTitle: 'Original', subTitle: 'Signs & Songs' })).toEqual({ aid: 2, sid: 1 });
+  });
+
   it('puts SDH last when asked', () => {
     const t: Track[] = [
       { id: 1, type: 'audio', lang: 'ja' },

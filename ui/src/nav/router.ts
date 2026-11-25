@@ -1,6 +1,7 @@
 // In-app navigation: a history stack with back/forward. Recent screens stay mounted (hidden),
 // so going back is instant and keeps scroll position and loaded rows.
 
+import { createContext, useContext } from 'react';
 import { create } from 'zustand';
 
 export type Route =
@@ -32,6 +33,8 @@ interface NavState {
   forward: () => void;
   /** Top-level destinations (sidebar) reuse an existing entry instead of piling up. */
   goTab: (route: Route) => void;
+  /** Takes pages of something that no longer exists (a deleted collection) out of history. */
+  drop: (gone: (route: Route) => boolean) => void;
 }
 
 let nextKey = 1;
@@ -72,12 +75,29 @@ export const useNav = create<NavState>((set, get) => ({
 
   goTab(route) {
     const { stack, index } = get();
-    if (stack[index].route.name === route.name && Object.keys(route).length === 1) {
+    if (stack[index].route.name === route.name) {
       // Same tab again: back to its top.
-      window.dispatchEvent(new CustomEvent('rove:scroll-top'));
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rove:scroll-top'));
       return;
     }
-    get().push(route);
+    // The tab's latest screen comes back to the front under its own key, so it is the same
+    // screen (scroll and state kept while it is still mounted) and not another copy. It moves
+    // to the top of the stack, as a push would put it, so Back returns to where the user was.
+    let at = -1;
+    for (let i = stack.length - 1; i >= 0 && at < 0; i--) if (stack[i].route.name === route.name) at = i;
+    if (at < 0) return get().push(route);
+    const next = [...stack.slice(0, index + 1).filter((e) => e.key !== stack[at].key), stack[at]];
+    set({ stack: next, index: next.length - 1 });
+  },
+
+  drop(gone) {
+    const { stack, index } = get();
+    if (!stack.some((e) => gone(e.route))) return;
+    const kept = stack.filter((e) => !gone(e.route));
+    if (!kept.length) return set({ stack: [{ key: nextKey++, route: { name: 'home' } }], index: 0 });
+    // Land on the current page if it survives, else on the nearest one before it.
+    const before = stack.slice(0, index + 1).filter((e) => !gone(e.route)).length;
+    set({ stack: kept, index: Math.max(0, before - 1) });
   },
 }));
 
@@ -93,3 +113,10 @@ export function currentRoute(): Route {
 export function mountedEntries(stack: Entry[], index: number, keep = 6): Entry[] {
   return stack.slice(Math.max(0, index - keep + 1), index + 1);
 }
+
+/**
+ * What a screen knows about its place in history: its entry's key, and whether it is the one on
+ * show (false while it waits in history, and while video plays over the app).
+ */
+export const ScreenContext = createContext<{ key: number; active: boolean }>({ key: -1, active: true });
+export const useScreen = () => useContext(ScreenContext);

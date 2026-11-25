@@ -3,8 +3,8 @@
 
 import { watchKey } from '../../addons/ids';
 import type { ProgressEntry, WatchedEntry } from '../../state/history';
-import { idsFor, metaIdFromIds, timeOf, tmdbFromIds, trackerFetch } from '../http';
-import { TrackerError, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
+import { idsFor, listOf, metaIdFromIds, SCROBBLE_CAP_PERCENT, timeOf, tmdbFromIds, trackerFetch } from '../http';
+import { TrackerError, type PullResult, type TitleRef, type TrackerAccount, type TrackerAdapter, type WatchlistEntry } from '../types';
 
 const API = 'https://api.trakt.tv';
 export const TRAKT_CLIENT_ID = (import.meta.env.VITE_TRAKT_CLIENT_ID as string | undefined)?.trim() || '';
@@ -117,15 +117,19 @@ export const traktAdapter: TrackerAdapter = {
     const [movies, episodes, watchedMovies, watchedShows, wlMovies, wlShows] = await Promise.all([
       call<Playback[]>(account, 'GET', '/sync/playback/movies?extended=full'),
       call<Playback[]>(account, 'GET', '/sync/playback/episodes?extended=full'),
-      call<{ last_watched_at: string; movie: { ids: Ids } }[]>(account, 'GET', '/sync/watched/movies'),
-      call<{ reset_at?: string | null; show: { ids: Ids }; seasons?: { number: number; episodes: { number: number; last_watched_at: string }[] }[] }[]>(account, 'GET', '/sync/watched/shows'),
-      call<{ listed_at: string; movie: { title?: string; year?: number; ids: Ids } }[]>(account, 'GET', '/sync/watchlist/movies/added/desc').catch(() => ({ data: [] })),
-      call<{ listed_at: string; show: { title?: string; year?: number; ids: Ids } }[]>(account, 'GET', '/sync/watchlist/shows/added/desc').catch(() => ({ data: [] })),
+      call<{ plays?: number; last_watched_at: string; movie: { ids: Ids } }[]>(account, 'GET', '/sync/watched/movies'),
+      call<{ reset_at?: string | null; show: { ids: Ids }; seasons?: { number: number; episodes: { number: number; plays?: number; last_watched_at: string }[] }[] }[]>(account, 'GET', '/sync/watched/shows'),
+      // The watchlist is extra: when it cannot be read, history still syncs and the local list is left alone.
+      call<{ listed_at: string; movie: { title?: string; year?: number; ids: Ids } }[]>(account, 'GET', '/sync/watchlist/movies/added/desc').catch(() => null),
+      call<{ listed_at: string; show: { title?: string; year?: number; ids: Ids } }[]>(account, 'GET', '/sync/watchlist/shows/added/desc').catch(() => null),
     ]);
+    const incomplete: NonNullable<PullResult['incomplete']> = [];
+    const listRead = Array.isArray(wlMovies?.data) && Array.isArray(wlShows?.data);
+    if (!listRead) incomplete.push('watchlist');
 
     playbackIds.clear();
     const progress: ProgressEntry[] = [];
-    for (const p of [...(movies.data ?? []), ...(episodes.data ?? [])]) {
+    for (const p of [...listOf(movies.data, 'Trakt'), ...listOf(episodes.data, 'Trakt')]) {
       const isMovie = p.type === 'movie';
       const metaId = metaIdFromIds(isMovie ? p.movie?.ids : p.show?.ids);
       if (!metaId) continue;
@@ -153,11 +157,13 @@ export const traktAdapter: TrackerAdapter = {
     }
 
     const watched: WatchedEntry[] = [];
-    for (const m of watchedMovies.data ?? []) {
+    // More than one play of the latest episode tells Continue Watching the show is being rewatched.
+    const again = (plays: number | undefined) => (plays && plays > 1 ? { plays } : {});
+    for (const m of listOf(watchedMovies.data, 'Trakt')) {
       const metaId = metaIdFromIds(m.movie.ids);
-      if (metaId) watched.push({ key: metaId, metaId, type: 'movie', at: timeOf(m.last_watched_at), tmdbId: tmdbFromIds(m.movie.ids), synced: true });
+      if (metaId) watched.push({ key: metaId, metaId, type: 'movie', at: timeOf(m.last_watched_at), tmdbId: tmdbFromIds(m.movie.ids), synced: true, ...again(m.plays) });
     }
-    for (const s of watchedShows.data ?? []) {
+    for (const s of listOf(watchedShows.data, 'Trakt')) {
       const metaId = metaIdFromIds(s.show.ids);
       if (!metaId) continue;
       const resetAt = timeOf(s.reset_at);
@@ -166,20 +172,20 @@ export const traktAdapter: TrackerAdapter = {
           const at = timeOf(ep.last_watched_at);
           // A rewatch started: earlier plays no longer count as watched.
           if (resetAt && at < resetAt) continue;
-          watched.push({ key: watchKey(metaId, season.number, ep.number), metaId, type: 'series', season: season.number, episode: ep.number, at, tmdbId: tmdbFromIds(s.show.ids), synced: true });
+          watched.push({ key: watchKey(metaId, season.number, ep.number), metaId, type: 'series', season: season.number, episode: ep.number, at, tmdbId: tmdbFromIds(s.show.ids), synced: true, ...again(ep.plays) });
         }
     }
 
     const watchlist: WatchlistEntry[] = [];
-    for (const w of wlMovies.data ?? []) {
+    for (const w of (listRead && wlMovies?.data) || []) {
       const metaId = metaIdFromIds(w.movie.ids);
-      if (metaId) watchlist.push({ metaId, type: 'movie', name: w.movie.title, year: w.movie.year ? String(w.movie.year) : undefined, addedAt: timeOf(w.listed_at) || undefined });
+      if (metaId) watchlist.push({ metaId, type: 'movie', name: w.movie.title, year: w.movie.year ? String(w.movie.year) : undefined, tmdbId: tmdbFromIds(w.movie.ids), addedAt: timeOf(w.listed_at) || undefined });
     }
-    for (const w of wlShows.data ?? []) {
+    for (const w of (listRead && wlShows?.data) || []) {
       const metaId = metaIdFromIds(w.show.ids);
-      if (metaId) watchlist.push({ metaId, type: 'series', name: w.show.title, year: w.show.year ? String(w.show.year) : undefined, addedAt: timeOf(w.listed_at) || undefined });
+      if (metaId) watchlist.push({ metaId, type: 'series', name: w.show.title, year: w.show.year ? String(w.show.year) : undefined, tmdbId: tmdbFromIds(w.show.ids), addedAt: timeOf(w.listed_at) || undefined });
     }
-    return { progress, watched, watchlist, counts: { resume: progress.length, watched: watched.length } };
+    return { progress, watched, watchlist: listRead ? watchlist : undefined, counts: { resume: progress.length, watched: watched.length }, incomplete, resumeCap: SCROBBLE_CAP_PERCENT / 100 };
   },
 
   async push(account, op, h) {
@@ -188,7 +194,7 @@ export const traktAdapter: TrackerAdapter = {
       const b = e && body(e);
       if (!b) return 'skip';
       // A pause scrobble stores the playback position without marking anything watched.
-      await call(account, 'POST', '/scrobble/pause', { ...b, progress: Math.min(79, Math.max(1, (e.positionS / e.durationS) * 100)) });
+      await call(account, 'POST', '/scrobble/pause', { ...b, progress: Math.min(SCROBBLE_CAP_PERCENT, Math.max(1, (e.positionS / e.durationS) * 100)) });
       return 'synced';
     }
     if (op.op === 'watched') {

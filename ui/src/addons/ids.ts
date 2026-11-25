@@ -44,3 +44,18 @@ export function episodeId(base: string, season: number, episode: number) {
 export function watchKey(metaId: string, season?: number, episode?: number): string {
   return season !== undefined && episode !== undefined ? `${metaId}:${season}:${episode}` : metaId;
 }
+
+/** The TMDB number of a bare `tmdb:<n>` title id (no episode parts), else null. */
+export function tmdbTitleNumber(metaId: string): number | null {
+  const m = /^tmdb:(\d+)$/i.exec(metaId);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * The key for what is kept once per title (card art, watchlist, Continue Watching dismissals).
+ * TMDB numbers movies and shows separately, so movie 693 and show 693 are different titles:
+ * a `tmdb:` id carries its type. Every other id is its own key.
+ */
+export function titleKey(metaId: string, type: 'movie' | 'series'): string {
+  return tmdbTitleNumber(metaId) !== null ? `${metaId.toLowerCase()}@${type}` : metaId;
+}

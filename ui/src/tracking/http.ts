@@ -75,9 +75,26 @@ export async function trackerFetch<T = unknown>(req: TrackerRequest): Promise<Tr
       (err as TrackerError & { data?: unknown }).data = data;
       throw err;
     }
+    // What is read from a tracker is JSON. Anything else with a 2xx is some gateway's page, and
+    // taking it for "nothing there" would look like the history had been deleted.
+    if (req.method === 'GET' && typeof data === 'string') throw new TrackerError('retry', `${req.service} sent an answer that could not be read.`, res.status);
     return { status: res.status, data: data as T, headers: res.headers };
   }
 }
+
+/** A list a tracker was asked for. Anything but an array (an error object, an empty body) is a failed read, never an empty list. */
+export function listOf<T>(data: T[] | null | undefined, service: string): T[] {
+  if (Array.isArray(data)) return data;
+  throw new TrackerError('retry', `${service} sent an answer that could not be read.`);
+}
+
+/**
+ * Resume points go to Trakt, Simkl and MDBList as a "pause" at a percentage, capped here: past
+ * 80 % those services may count a scrobble as watched. Whether a pause really does has not been
+ * checked against each API, so the cap stays; a position pulled back at the cap is recognised as
+ * ours (PullResult.resumeCap) instead of replacing the exact local one.
+ */
+export const SCROBBLE_CAP_PERCENT = 79;
 
 /** External ids for a title as trackers want them. */
 export function idsFor(metaId: string, tmdbId?: number): { imdb?: string; tmdb?: number } {

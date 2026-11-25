@@ -3,21 +3,28 @@ import { Info, Play, Plus, Check, Star } from 'lucide-react';
 import type { MetaPreview } from '../../addons/types';
 import { Button, IconButton } from '../../ui/controls';
 import { Img } from '../../ui/Img';
-import { navigate } from '../../nav/router';
+import { navigate, useScreen } from '../../nav/router';
 import { asMediaType, useTmdb } from '../../data/hooks';
-import { useHistory } from '../../state/history';
 import { useSettings } from '../../state/settings';
-import { toggleWatchlist } from '../../library/watchlist';
+import { toggleWatchlist, useInWatchlist } from '../../library/watchlist';
 import { playTitle } from '../../player/launch';
 
 const ROTATE_MS = 9000;
-const TRAILER_DELAY_MS = 3500;
+/** How long the pointer rests on the banner before its trailer starts. */
+const TRAILER_HOVER_MS = 900;
 
 /** The featured banner at the top of Home: rotates through a few titles with their art. */
 export function Hero({ items }: { items: MetaPreview[] }) {
   const featured = useMemo(() => items.filter((i) => i.background || i.poster).slice(0, 8), [items]);
   const [index, setIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  // Home stays mounted behind other screens and under the player: the banner rests there, and
+  // forgets the pointer (it gets no "leave" once it is hidden).
+  const { active } = useScreen();
+  useEffect(() => {
+    if (!active) setHovered(false);
+  }, [active]);
+  const paused = hovered || !active;
   const current = featured[index % Math.max(1, featured.length)];
 
   useEffect(() => {
@@ -28,9 +35,9 @@ export function Hero({ items }: { items: MetaPreview[] }) {
 
   if (!current) return <div className="hero hero--empty" />;
   return (
-    <section className="hero" onPointerEnter={() => setPaused(true)} onPointerLeave={() => setPaused(false)} aria-roledescription="carousel" aria-label="Featured">
+    <section className="hero" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)} aria-roledescription="carousel" aria-label="Featured">
       {featured.map((m, i) => (
-        <HeroSlide key={m.id} meta={m} active={i === index % featured.length} />
+        <HeroSlide key={m.id} meta={m} active={i === index % featured.length} hovered={hovered && active} />
       ))}
       {featured.length > 1 && (
         <div className="hero__dots" role="tablist">
@@ -45,20 +52,21 @@ export function Hero({ items }: { items: MetaPreview[] }) {
   );
 }
 
-function HeroSlide({ meta, active }: { meta: MetaPreview; active: boolean }) {
+function HeroSlide({ meta, active, hovered }: { meta: MetaPreview; active: boolean; hovered: boolean }) {
   const type = asMediaType(meta.type);
   const tmdb = useTmdb(meta.type, active ? meta.id : undefined);
   const trailersOn = useSettings((s) => s.settings.appearance.heroTrailers);
-  const inList = useHistory((s) => !!s.library[meta.id]);
+  const inList = useInWatchlist(meta.id, type);
   const [showTrailer, setShowTrailer] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
+  // The trailer plays only while the pointer rests on the banner, and stops when it leaves.
   useEffect(() => {
     setShowTrailer(false);
     window.clearTimeout(timer.current);
-    if (active && trailersOn && tmdb.data?.trailer) timer.current = window.setTimeout(() => setShowTrailer(true), TRAILER_DELAY_MS);
+    if (active && hovered && trailersOn && tmdb.data?.trailer) timer.current = window.setTimeout(() => setShowTrailer(true), TRAILER_HOVER_MS);
     return () => window.clearTimeout(timer.current);
-  }, [active, trailersOn, tmdb.data?.trailer]);
+  }, [active, hovered, trailersOn, tmdb.data?.trailer]);
 
   const background = tmdb.data?.backdrop ?? meta.background ?? meta.poster;
   const logo = meta.logo ?? tmdb.data?.logo;

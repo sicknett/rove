@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Lock, Plus } from 'lucide-react';
 import { MAX_PROFILES, useProfiles, type Profile } from '../state/profiles';
 import { Avatar } from '../components/Avatar';
-import { Dialog } from '../ui/controls';
-import { ProfileEditor } from './settings/profiles';
+import { PinDialog, ProfileEditor } from './settings/profiles';
 import logoUrl from '../assets/rove-logo.png';
 import wallpaperUrl from '../assets/wallpaper.png';
 
@@ -45,31 +44,5 @@ export function ProfilePicker() {
       {pinFor && <PinDialog profile={pinFor} onClose={() => setPinFor(null)} onOk={() => activate(pinFor.id)} />}
       {adding && <ProfileEditor profile={null} onClose={() => setAdding(false)} />}
     </main>
-  );
-}
-
-function PinDialog({ profile, onClose, onOk }: { profile: Profile; onClose: () => void; onOk: () => void }) {
-  const [digits, setDigits] = useState('');
-  const [wrong, setWrong] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => input.current?.focus(), []);
-  useEffect(() => {
-    if (digits.length !== 4) return;
-    if (digits === profile.pin) onOk();
-    else {
-      setWrong(true);
-      const t = window.setTimeout(() => (setDigits(''), setWrong(false)), 600);
-      return () => window.clearTimeout(t);
-    }
-  }, [digits, profile.pin, onOk]);
-  return (
-    <Dialog open onClose={onClose} title={`PIN for ${profile.name}`} width={380}>
-      <div className={`pin ${wrong ? 'is-wrong' : ''}`} onClick={() => input.current?.focus()}>
-        {[0, 1, 2, 3].map((i) => (
-          <span key={i} className={`pin__dot ${i < digits.length ? 'is-filled' : ''}`} />
-        ))}
-        <input ref={input} className="pin__input" inputMode="numeric" value={digits} aria-label="PIN" onChange={(e) => setDigits(e.target.value.replace(/\D/g, '').slice(0, 4))} />
-      </div>
-    </Dialog>
   );
 }

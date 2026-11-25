@@ -4,7 +4,7 @@ import { channelLabel, languageName } from '../format';
 import { useSettings } from '../state/settings';
 import { usePlayback } from './session';
 import { rememberChoice } from './runtime';
-import { usePlayer, type Track } from './store';
+import { patchPlayerState, usePlayer, type Track } from './store';
 
 export const AUDIO_DELAY_MIN_MS = -500;
 export const AUDIO_DELAY_MAX_MS = 1500;
@@ -173,35 +173,33 @@ export function SpeedMenu() {
 const ASPECTS: { id: string; label: string; apply: () => void }[] = [
   { id: 'fit', label: 'Fit', apply: () => (mpv.set('video-aspect-override', 'no'), mpv.set('panscan', 0), mpv.set('video-zoom', 0)) },
   { id: 'fill', label: 'Fill screen', apply: () => (mpv.set('video-aspect-override', 'no'), mpv.set('panscan', 1), mpv.set('video-zoom', 0)) },
-  { id: 'zoom', label: 'Zoom 10 %', apply: () => (mpv.set('panscan', 0), mpv.set('video-zoom', 0.1375)) },
+  { id: 'zoom', label: 'Zoom 10 %', apply: () => (mpv.set('video-aspect-override', 'no'), mpv.set('panscan', 0), mpv.set('video-zoom', 0.1375)) },
   { id: '16:9', label: '16:9', apply: () => (mpv.set('video-aspect-override', '16:9'), mpv.set('panscan', 0), mpv.set('video-zoom', 0)) },
   { id: '4:3', label: '4:3', apply: () => (mpv.set('video-aspect-override', '4:3'), mpv.set('panscan', 0), mpv.set('video-zoom', 0)) },
   { id: '2.39:1', label: '2.39:1', apply: () => (mpv.set('video-aspect-override', '2.39:1'), mpv.set('panscan', 0), mpv.set('video-zoom', 0)) },
 ];
 
-let currentAspect = 'fit';
-
 export function VideoMenu() {
   const hwdec = useSettings((s) => s.settings.playback.hwdec);
   const setSettings = useSettings((s) => s.set);
   const current = usePlayer((s) => s.hwdec);
+  // The mode lives in the player state: starting another video puts it (and mpv) back to "Fit".
+  const aspect = usePlayer((s) => s.aspect);
   return (
     <div className="menu" role="menu" onPointerDown={stop}>
       <h3 className="menu__heading">Picture</h3>
       {ASPECTS.map((a) => (
         <button
           key={a.id}
-          className={`menu__item${currentAspect === a.id ? ' is-selected' : ''}`}
+          className={`menu__item${aspect === a.id ? ' is-selected' : ''}`}
           role="menuitemradio"
-          aria-checked={currentAspect === a.id}
-          onClick={(e) => {
-            currentAspect = a.id;
+          aria-checked={aspect === a.id}
+          onClick={() => {
+            patchPlayerState({ aspect: a.id });
             a.apply();
-            (e.currentTarget.parentElement as HTMLElement).querySelectorAll('.menu__item').forEach((el) => el.classList.remove('is-selected'));
-            e.currentTarget.classList.add('is-selected');
           }}
         >
-          <span className="menu__check">{currentAspect === a.id && <Check size={15} />}</span>
+          <span className="menu__check">{aspect === a.id && <Check size={15} />}</span>
           <span className="menu__label">{a.label}</span>
         </button>
       ))}
@@ -222,8 +220,4 @@ export function VideoMenu() {
       </div>
     </div>
   );
-}
-
-export function resetAspect() {
-  currentAspect = 'fit';
 }

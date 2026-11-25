@@ -5,6 +5,101 @@ All notable changes to ROVE. Dates are when the change was made. Screenshots liv
 
 ## Unreleased
 
+### 2026-11-25 — Audit and repair
+
+The whole app was read for defects and the findings were worked through. The lists, with the
+state of every item, are in `docs/audit/` (player, tracking, and everything else): 96 fixed,
+10 partly, 2 open.
+
+**Fixed: playback**
+- No picture during playback. The video window was cut out from under the page (sibling
+  clipping), and the main window lost the style that keeps it from painting over its children
+  each time it was shown, maximized or put in full screen. The style is now enforced on every
+  change and the video window is no longer clipped.
+- Play no longer waits for the slowest stream addon: it starts once no unanswered addon could
+  change the choice, or a few seconds after the first answer.
+- A film or last episode that reaches its end is marked watched and the player closes; with a
+  next episode it starts (auto-play and "still watching" respected). The Up Next card retracts
+  when you seek back.
+- The exact position is saved (and queued for the tracker) on every way out of a video:
+  episode change, source change, leaving the player, closing the window. A media server gets its
+  stop report.
+- A link is remembered only after it has actually played; a failed one is forgotten, and the
+  "finding a fresh source" loop is gone. Position survives a failed or slow source switch.
+- Picture mode, zoom, subtitle delay and speed no longer leak into the next video. Shortcuts keep
+  working after using the volume slider, with Caps Lock on, and are off under dialogs.
+- Picture in picture: the small window drags by its picture, ignores full screen, and returns to
+  the size and state it came from. External player: ROVE pauses and says whether it opened.
+
+**Fixed: Continue Watching and tracking**
+- Continue Watching was missing from Home when collections were pinned (they were forced above
+  every row). Home now follows the order in Settings → Home layout exactly.
+- One id per title. History pulled from a tracker was stored under `tmdb:` ids because a failed
+  id lookup was remembered forever; "next episode" cards, names, art and the title page's ticks
+  and Resume button then did not line up. Lookups are retried, existing entries move to the
+  IMDb id once it is known (nothing is dropped when it is not), and metadata and sources fall
+  back to the other id form.
+- Sync no longer deletes a resume point that is newer here than on the tracker, no longer treats
+  a failed or partial download as "removed elsewhere", keeps unsent changes if the app closes
+  mid-send, and cannot write one profile's data into another during a profile switch.
+- "Watched" is sent once per viewing instead of every few seconds through the credits. Bulk
+  marks skip episodes already watched. Watchlist changes queue and sync both ways.
+- Poster-style Continue Watching cards play on click and have Remove and Mark watched.
+
+**Fixed: Home, browsing, settings**
+- Back and forward arrows are hidden on Home and wherever neither goes anywhere. Sidebar tabs
+  return to the screen you left instead of stacking copies.
+- Banner trailers play only while the pointer rests on the banner, and page media no longer
+  appears in the Windows media overlay or takes the media keys.
+- Long dropdowns scroll; Escape in a dropdown no longer closes the dialog around it; window
+  buttons work while a dialog is open.
+- A failing addon shows an error with Try again instead of empty content or minutes of
+  placeholders; a failed "load more" keeps what was loaded.
+- Default collections: sources ROVE cannot show are removed at seed, import and once for
+  collections already saved. The folder editor has a genre picker; "Add folder" then Cancel
+  leaves nothing behind; tile shape applies per tile.
+- Deleting a profile and restoring a backup ask first; a PIN-protected profile needs its PIN to
+  be edited; undo for a removed addon or server restores it as it was.
+- A saved file that exists but cannot be read is no longer replaced by an empty one.
+
+**Added**
+- A ⋯ menu on every Home row (also on right-click of its header): Move up, Move down, Hide from
+  Home, Edit folders, Home layout. Settings → Home layout has an Edit folders button per
+  collection.
+- Scroll bars are hidden everywhere.
+
+**Checked**
+- Typecheck; 120 unit tests.
+- Packaged build in a test copy with its own data folder: a sample clip shows its picture with
+  the controls on top in windowed, maximized and full screen (the app's own window area
+  captured); at the end of the clip the player closes back to Home.
+- A copy of a real PublicMetaDB-synced history (28 resume points, 649 watched): all entries kept,
+  positions unchanged, 637 watched entries moved to IMDb ids, 12 with no match left as they were.
+- Browser build with the same history and Cinemeta: Continue Watching shows names, art and
+  "Next" cards.
+- Not checked: a real session with stream addons and a tracker account (sign-ins are not copied
+  into test copies), real media servers, subtitle shadow style, Plex address recovery.
+
+### 2026-11-24 — Windows installer
+
+**Added**
+- `ROVE-Setup-<version>.exe` (about 36 MB), built by `tools\make-installer.ps1` with Inno Setup.
+  Installs for the current Windows account without an administrator prompt, adds Start menu and
+  optional desktop shortcuts, registers an uninstaller in Settings → Apps, and checks for
+  WebView2 first. Installing over an existing copy updates it in place; your data in
+  `%LOCALAPPDATA%\ROVE` is kept, and uninstalling asks before removing it.
+- ROVE holds a named lock while it runs so Setup can tell it is open and ask you to close it
+  instead of replacing files in use.
+
+**Checked**
+- Silent install into a test folder: files, Start menu entry and Apps entry created; the
+  installed copy opened and played a sample stream. Silent uninstall removed the files, the
+  shortcut and the Apps entry and left the ROVE data folder untouched.
+- Installing over a running ROVE in silent mode stops with an error rather than replacing files
+  in use; the interactive Setup shows Inno Setup's "close ROVE first" prompt instead (not
+  clicked through here).
+- Not signed: Windows SmartScreen warns on first run.
+
 ### 2026-11-24 — Media servers, tracker choice, collections for everyone, smooth scrolling
 
 | Media servers | Accounts |

@@ -22,7 +22,9 @@ export type Inbound =
   | { t: 'window'; maximized: boolean; fullscreen: boolean; pip?: boolean }
   | { t: 'closing' }
   | { t: 'media-key'; key: 'play' | 'pause' | 'next' | 'previous' | 'stop' }
-  | { t: 'open'; url: string; title?: string };
+  | { t: 'open'; url: string; title?: string }
+  /** Whether the user's external player started, with a sentence to show. */
+  | { t: 'external-player'; ok: boolean; text: string };
 
 interface RoveBridge {
   platform: string;

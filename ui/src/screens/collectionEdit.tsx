@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, FolderPlus, Pencil, Plus, Trash2, X } from 'lucide-react';
-import { provides } from '../addons/client';
+import { canBrowse, canOpenType, catalogNeeds, genreOptions } from '../addons/client';
 import { useAddons } from '../addons/store';
 import { folderSources, useCollections, type CollectionFolder, type CollectionSource } from '../state/collections';
 import { sourceKey, sourceLabel } from '../data/sources';
@@ -9,6 +9,7 @@ import { Button, Dialog, Empty, IconButton, Segmented, Select, Switch, TextField
 import { Img } from '../ui/Img';
 import { toast } from '../ui/toast';
 import { Group, SettingRow } from './settings/parts';
+import { CONTINUE_KEY, useHomeLayout } from '../state/homeLayout';
 
 export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?: string }) {
   const collection = useCollections((s) => s.collections.find((c) => c.id === id));
@@ -16,6 +17,7 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
   const replace = useNav((s) => s.replace);
   const [title, setTitle] = useState(collection?.title ?? '');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [creating, setCreating] = useState(false);
   if (!collection) return <Empty title="This collection no longer exists" />;
   const editing = collection.folders.find((f) => f.id === openFolder);
   const rows = (collection.viewMode ?? '').toUpperCase() === 'ROWS';
@@ -36,8 +38,19 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
         <SettingRow label="Name" stacked>
           <TextField value={title} onChange={setTitle} onBlur={() => title.trim() && store.update(id, { title: title.trim() })} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />
         </SettingRow>
-        <SettingRow label="Pin to the top of Home" hint="Pinned collections sit above the other rows">
-          <Switch checked={!!collection.pinToTop} onChange={(v) => store.update(id, { pinToTop: v })} label="Pin to the top" />
+        <SettingRow label="Pin to the top of Home" hint="Moves this row up, just under Continue Watching. Rows can still be reordered in Settings → Home layout.">
+          <Switch
+            checked={!!collection.pinToTop}
+            onChange={(v) => {
+              store.update(id, { pinToTop: v });
+              if (v) {
+                const layout = useHomeLayout.getState();
+                const keys = [...layout.items].sort((a, b) => a.order - b.order).map((i) => i.key);
+                layout.moveRow(`collection_${id}`, keys[0] === CONTINUE_KEY ? 1 : 0, keys);
+              }
+            }}
+            label="Pin to the top"
+          />
         </SettingRow>
         <SettingRow label="Opening a folder shows" hint="Its sources as tabs over one grid, or as rows">
           <Segmented
@@ -57,10 +70,7 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
           <Button
             variant="secondary"
             icon={<FolderPlus size={16} />}
-            onClick={() => {
-              const f = store.addFolder(id, { title: 'New folder', tileShape: 'poster', sources: [] });
-              replace({ name: 'collection-edit', id, folder: f.id });
-            }}
+            onClick={() => setCreating(true)}
           >
             Add folder
           </Button>
@@ -109,6 +119,7 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
       </Group>
 
       {editing && <FolderEditor collectionId={id} folder={editing} onClose={() => replace({ name: 'collection-edit', id })} />}
+      {creating && <FolderEditor collectionId={id} folder={null} onClose={() => setCreating(false)} />}
 
       <Dialog
         open={confirmDelete}
@@ -125,7 +136,9 @@ export function CollectionEdit({ id, folder: openFolder }: { id: string; folder?
               onClick={() => {
                 const copy = collection;
                 store.remove(id);
-                goBack();
+                // Its pages leave history with it (this one included), so neither this step nor a
+                // later Back lands on "This collection no longer exists".
+                useNav.getState().drop((r) => (r.name === 'collection' || r.name === 'collection-edit') && r.id === id);
                 toast.info(`${copy.title} deleted`, { label: 'Undo', run: () => store.merge([copy]) });
               }}
             >
@@ -149,34 +162,47 @@ const TMDB_KINDS = [
   { value: 'DIRECTOR', label: 'Director' },
 ] as const;
 
-function FolderEditor({ collectionId, folder, onClose }: { collectionId: string; folder: CollectionFolder; onClose: () => void }) {
+/** Edits a folder, or with `folder` null makes a new one, which exists only once it is saved. */
+function FolderEditor({ collectionId, folder, onClose }: { collectionId: string; folder: CollectionFolder | null; onClose: () => void }) {
   const store = useCollections.getState();
   const addons = useAddons((s) => s.addons);
-  const [title, setTitle] = useState(folder.title);
-  const [cover, setCover] = useState(folder.coverImageUrl ?? '');
-  const [shape, setShape] = useState<'poster' | 'landscape'>((folder.tileShape ?? '').match(/landscape|wide/i) ? 'landscape' : 'poster');
-  const [hideTitle, setHideTitle] = useState(!!folder.hideTitle);
-  const [sources, setSources] = useState<CollectionSource[]>(folderSources(folder));
+  const [title, setTitle] = useState(folder?.title ?? '');
+  const [cover, setCover] = useState(folder?.coverImageUrl ?? '');
+  const [shape, setShape] = useState<'poster' | 'landscape'>((folder?.tileShape ?? '').match(/landscape|wide/i) ? 'landscape' : 'poster');
+  const [hideTitle, setHideTitle] = useState(!!folder?.hideTitle);
+  const [sources, setSources] = useState<CollectionSource[]>(folder ? folderSources(folder) : []);
   const [adding, setAdding] = useState<'addon' | 'tmdb' | null>(null);
 
   const catalogs = useMemo(
     () =>
-      addons
-        .filter((a) => a.enabled && provides(a, 'catalog'))
-        .flatMap((a) =>
-          a.manifest.catalogs
-            .filter((c) => !(c.extra ?? []).some((e) => e.isRequired && e.name !== 'genre'))
-            .map((c) => ({ value: `${a.manifest.id}|${c.type}|${c.id}`, label: c.name, detail: `${a.manifest.name} · ${c.type}` })),
-        ),
+      addons.filter(canBrowse).flatMap((a) =>
+        a.manifest.catalogs
+          // A catalog that needs more than a genre (a search text) cannot be a source.
+          .filter((c) => canOpenType(c.type) && !catalogNeeds(c).some((n) => n !== 'genre'))
+          .map((c) => ({
+            value: `${a.manifest.id}|${c.type}|${c.id}`,
+            label: c.name,
+            detail: `${a.manifest.name} · ${c.type}`,
+            addonId: a.manifest.id,
+            type: c.type,
+            catalogId: c.id,
+            genres: genreOptions(c),
+            genreRequired: catalogNeeds(c).includes('genre'),
+          })),
+      ),
     [addons],
   );
   const [pick, setPick] = useState('');
+  const [genre, setGenre] = useState('');
+  const picked = catalogs.find((c) => c.value === pick);
   const [tmdbKind, setTmdbKind] = useState<(typeof TMDB_KINDS)[number]['value']>('LIST');
   const [tmdbId, setTmdbId] = useState('');
   const [tmdbMedia, setTmdbMedia] = useState<'movie' | 'tv'>('movie');
 
   const save = () => {
-    store.updateFolder(collectionId, folder.id, { title: title.trim() || 'Folder', coverImageUrl: cover.trim() || null, tileShape: shape, hideTitle, sources, catalogSources: [] });
+    const data = { title: title.trim() || (folder ? 'Folder' : 'New folder'), coverImageUrl: cover.trim() || null, tileShape: shape, hideTitle, sources, catalogSources: [] };
+    if (folder) store.updateFolder(collectionId, folder.id, data);
+    else store.addFolder(collectionId, data);
     onClose();
   };
 
@@ -191,7 +217,7 @@ function FolderEditor({ collectionId, folder, onClose }: { collectionId: string;
     <Dialog
       open
       onClose={onClose}
-      title="Edit folder"
+      title={folder ? 'Edit folder' : 'New folder'}
       width={620}
       footer={
         <>
@@ -212,7 +238,7 @@ function FolderEditor({ collectionId, folder, onClose }: { collectionId: string;
             {!hideTitle && <span className="folder-editor__caption">{title}</span>}
           </div>
           <div className="form-stack">
-            <TextField label="Name" value={title} onChange={setTitle} data-autofocus />
+            <TextField label="Name" value={title} onChange={setTitle} placeholder={folder ? undefined : 'New folder'} data-autofocus />
             <TextField label="Cover image link" value={cover} onChange={setCover} placeholder="https://…" />
             <div className="folder-editor__toggles">
               <Segmented
@@ -265,16 +291,30 @@ function FolderEditor({ collectionId, folder, onClose }: { collectionId: string;
             </div>
           )}
           {adding === 'addon' && (
-            <div className="inline-form">
-              <Select label="Catalog" value={pick} options={[{ value: '', label: 'Choose a catalog' }, ...catalogs]} onChange={setPick} />
+            <div className="inline-form inline-form--wrap">
+              <Select
+                label="Catalog"
+                value={pick}
+                options={[{ value: '', label: 'Choose a catalog' }, ...catalogs]}
+                onChange={(v) => {
+                  setPick(v);
+                  // A catalog that only answers per genre starts on its first one.
+                  const c = catalogs.find((x) => x.value === v);
+                  setGenre(c?.genreRequired ? (c.genres[0] ?? '') : '');
+                }}
+              />
+              {picked && picked.genres.length > 0 && (
+                <Select label="Genre" value={genre} options={[...(picked.genreRequired ? [] : [{ value: '', label: 'Any genre' }]), ...picked.genres.map((g) => ({ value: g, label: g }))]} onChange={setGenre} />
+              )}
               <Button
                 variant="primary"
                 size="sm"
-                disabled={!pick}
+                disabled={!picked}
                 onClick={() => {
-                  const [addonId, type, catalogId] = pick.split('|');
-                  setSources([...sources, { provider: 'addon', addonId, type, catalogId }]);
+                  if (!picked) return;
+                  setSources([...sources, { provider: 'addon', addonId: picked.addonId, type: picked.type, catalogId: picked.catalogId, ...(genre ? { genre } : {}) }]);
                   setPick('');
+                  setGenre('');
                   setAdding(null);
                 }}
               >

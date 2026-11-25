@@ -57,7 +57,12 @@ export interface PlayerState {
   window: { maximized: boolean; fullscreen: boolean };
   /** The last audio track that actually played, so a lost output can be told apart from "off". */
   lastAudioTrack: number | null;
+  /** The picture mode chosen in the Picture menu (mpv has no single property for it). */
+  aspect: string;
 }
+
+/** A playback event; `stale` when it belongs to the file before the one now being loaded. */
+export type PlayerEvent = Extract<Inbound, { t: 'event' }> & { stale?: boolean };
 
 const initial: PlayerState = {
   active: false,
@@ -88,11 +93,12 @@ const initial: PlayerState = {
   error: null,
   window: { maximized: false, fullscreen: false },
   lastAudioTrack: null,
+  aspect: 'fit',
 };
 
 let state: PlayerState = initial;
 const listeners = new Set<() => void>();
-const eventListeners = new Set<(e: Extract<Inbound, { t: 'event' }>) => void>();
+const eventListeners = new Set<(e: PlayerEvent) => void>();
 const openListeners = new Set<(e: Extract<Inbound, { t: 'open' }>) => void>();
 
 /** The shell asking to open a stream (started with --play). */
@@ -114,6 +120,30 @@ export function getPlayerState() {
 
 export function patchPlayerState(patch: Partial<PlayerState>) {
   setState(patch);
+}
+
+// Where the video is, kept apart from `timePos`. mpv reports no position (read here as 0) while a
+// file loads, after it fails and once it is unloaded, and those are the moments a resume point,
+// Retry or a source switch need the real one. So this only follows positions of a file that has
+// started playing, and otherwise holds where the load was asked to start.
+let known = { pos: 0, dur: 0 };
+let intended = 0;
+/** The file has shown its first frame at the requested start. */
+let settled = false;
+/** A load was asked for and mpv has not begun it: events until then are the previous file's. */
+let awaitingStart = false;
+
+/** The last certain position and length of the current video; `dur` is 0 until it has played. */
+export function knownPosition(): { pos: number; dur: number } {
+  return known;
+}
+
+/** Call right before `loadfile`, with where the new file should start. */
+export function expectLoad(startAt: number) {
+  intended = startAt;
+  known = { pos: startAt, dur: 0 };
+  settled = false;
+  awaitingStart = true;
 }
 
 const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
@@ -151,6 +181,7 @@ function applyProps(v: Record<string, unknown>) {
   const output = patch.audioOutput !== undefined ? patch.audioOutput : state.audioOutput;
   if (aid && output) patch.lastAudioTrack = aid;
   setState(patch);
+  if (settled && typeof v['time-pos'] === 'number' && state.duration > 0) known = { pos: state.timePos, dur: state.duration };
 }
 
 export function startListening() {
@@ -159,15 +190,27 @@ export function startListening() {
     else if (message.t === 'open') openListeners.forEach((l) => l(message));
     else if (message.t === 'window') setState({ window: { maximized: message.maximized, fullscreen: message.fullscreen } });
     else if (message.t === 'event') {
-      if (message.name === 'start-file') setState({ loading: true, error: null, eof: false, lastAudioTrack: null });
-      if (message.name === 'playback-restart' || message.name === 'file-loaded') setState({ loading: false });
-      if (message.name === 'end-file' && message.reason === 'error') setState({ loading: false, error: message.error ?? 'This stream could not be played.' });
-      eventListeners.forEach((l) => l(message));
+      // Events carry no file id. mpv sends them in order, so everything between asking for a load
+      // and its `start-file` is the old file winding down, and must not touch the new one.
+      const stale = awaitingStart && message.name !== 'start-file';
+      if (message.name === 'start-file') {
+        awaitingStart = false;
+        settled = false;
+        known = { pos: intended, dur: 0 };
+        setState({ loading: true, error: null, eof: false, lastAudioTrack: null });
+      }
+      if (!stale) {
+        if (message.name === 'playback-restart') settled = true;
+        if (message.name === 'playback-restart' || message.name === 'file-loaded') setState({ loading: false });
+        if (message.name === 'end-file' && message.reason === 'error') setState({ loading: false, error: message.error ?? 'This stream could not be played.' });
+      }
+      const event: PlayerEvent = stale ? { ...message, stale: true } : message;
+      eventListeners.forEach((l) => l(event));
     }
   });
 }
 
-export function onPlayerEvent(fn: (e: Extract<Inbound, { t: 'event' }>) => void) {
+export function onPlayerEvent(fn: (e: PlayerEvent) => void) {
   eventListeners.add(fn);
   return () => {
     eventListeners.delete(fn);

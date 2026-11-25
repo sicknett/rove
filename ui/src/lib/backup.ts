@@ -1,7 +1,8 @@
 // A ROVE backup: everything needed to set up another PC the same way. Addons, profiles and each
 // profile's settings, home layout, collections and track choices; API keys only when asked for
-// (the file is then as sensitive as the keys): tracker sign-ins, media servers, TMDB key. Watch
-// history is not included: the tracker carries it between devices.
+// (the file is then as sensitive as the keys): tracker sign-ins, media servers, TMDB key. Addon
+// links are always in it, and a link can carry its addon's configuration (keys included), so no
+// backup is free of secrets. Watch history is not included: the tracker carries it between devices.
 
 import { docs, freezeWrites, secrets } from './native';
 import { useProfiles, type Profile } from '../state/profiles';

@@ -1,7 +1,7 @@
 // Profiles: up to six, each with its own settings, home layout, history and tracker account.
 
 import { create } from 'zustand';
-import { docs } from '../lib/native';
+import { docs, secrets } from '../lib/native';
 
 export const AVATAR_COLORS = ['#9eb7a4', '#8ba7c7', '#c7a07a', '#b48ead', '#d08770', '#a3be8c', '#88c0d0', '#e5c07b'];
 export const MAX_PROFILES = 6;
@@ -40,6 +40,24 @@ interface ProfilesState {
 }
 
 const newId = () => `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/**
+ * Everything kept per profile, by the base name given to `profileDoc`: settings, Home layout,
+ * collections (and that they were seeded), watch history, track choices, remembered links, recent
+ * searches; and, encrypted, the tracker sign-in (`pmdb` is its older form). A new per-profile
+ * document belongs in this list, or it outlives its profile.
+ */
+export const PROFILE_DOCS = ['settings', 'home', 'collections', 'collections-seeded', 'history', 'tracks', 'links', 'searches'] as const;
+export const PROFILE_SECRETS = ['tracker', 'pmdb'] as const;
+
+/** Removes a deleted profile's files. */
+async function deleteProfileData(id: string, wasActive: boolean) {
+  // The profile that is open may still have a save waiting. It goes out first, or it would
+  // write a file back after the file was deleted.
+  if (wasActive) await import('./flushAll').then((m) => m.flushAll()).catch(() => undefined);
+  const gone = [...PROFILE_DOCS.map((name) => docs.remove(profileDoc(name, id))), ...PROFILE_SECRETS.map((name) => secrets.remove(profileDoc(name, id)))];
+  await Promise.all(gone.map((p) => p.catch((e) => console.error(e))));
+}
 
 function save(state: ProfilesState) {
   const doc: ProfilesDoc = { profiles: state.profiles, lastActiveId: state.activeId ?? undefined, autoOpenLast: state.autoOpenLast };
@@ -90,8 +108,10 @@ export const useProfiles = create<ProfilesState>((set, get) => ({
   remove(id) {
     if (get().profiles.length <= 1) return;
     const profiles = get().profiles.filter((p) => p.id !== id);
-    set({ profiles, activeId: get().activeId === id ? null : get().activeId });
+    const wasActive = get().activeId === id;
+    set({ profiles, activeId: wasActive ? null : get().activeId });
     save(get());
+    void deleteProfileData(id, wasActive);
   },
 
   setAutoOpenLast(v) {

@@ -161,15 +161,28 @@ fn allowed_command(args: &[String]) -> bool {
 
 /// Hands a stream to the user's own player (mpv, VLC, MPC-HC…): an existing .exe they chose,
 /// given only the http(s) link as its argument.
-fn open_in_player(url: &str, player: &str) {
+/// Returns the player's file name when it started, or why it did not (shown to the user).
+fn open_in_player(url: &str, player: &str) -> Result<String, String> {
     let path = std::path::Path::new(player);
     let is_exe = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"));
-    if !is_web_url(url) || !is_exe || !path.is_file() {
-        return log::warn!("refused to open an external player");
+    if !is_web_url(url) {
+        log::warn!("refused to open an external player");
+        return Err("This source has no link another player can open.".into());
     }
+    if !is_exe || !path.is_file() {
+        log::warn!("refused to open an external player");
+        return Err("The external player in Settings is not an .exe file that exists.".into());
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     match std::process::Command::new(path).arg(url).spawn() {
-        Ok(_) => log::info!("opened the stream in {}", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()),
-        Err(e) => log::warn!("could not start the external player: {e}"),
+        Ok(_) => {
+            log::info!("opened the stream in {name}");
+            Ok(name)
+        }
+        Err(e) => {
+            log::warn!("could not start the external player: {e}");
+            Err(format!("{name} could not be started."))
+        }
     }
 }
 
@@ -323,8 +336,10 @@ fn set_fullscreen(window: &Window, value: Option<bool>, remaximize: &mut bool) {
     }
 }
 
+// Page media (banner trailers) must not appear in the Windows media overlay with its own
+// pause/previous/next, nor take the media keys: those belong to the player, which registers itself.
 fn browser_args() -> String {
-    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required");
+    let mut args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling,GlobalMediaControls,MediaSessionService --autoplay-policy=no-user-gesture-required");
     // For measurements and debugging tools: ROVE_DEBUG_PORT opens the web view's debugging port.
     if let Some(port) = std::env::var("ROVE_DEBUG_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
         args.push_str(&format!(" --remote-debugging-port={port}"));
@@ -511,7 +526,13 @@ fn handle(message: Inbound, mpv: &mpv::Mpv, user_off: &mpv::AudioRecoveryHandle,
             send(UserEvent::PageReady);
         }
         Inbound::OpenExternal { url } => platform::open_external(&url),
-        Inbound::OpenExternalPlayer { url, player } => open_in_player(&url, &player),
+        Inbound::OpenExternalPlayer { url, player } => {
+            let message = match open_in_player(&url, &player) {
+                Ok(name) => json!({ "t": "external-player", "ok": true, "text": format!("Opened in {name}") }),
+                Err(why) => json!({ "t": "external-player", "ok": false, "text": why }),
+            };
+            send(UserEvent::Emit(message));
+        }
         Inbound::Log { message } => log::info!("page: {}", message.chars().take(500).collect::<String>()),
     }
 }
@@ -648,7 +669,8 @@ fn main() {
     enable_title_bar_regions(&webview);
     let _ = webview.load_url(&start_url);
 
-    // Nothing plays yet: an opaque page is far cheaper to scroll than a see-through one.
+    // Nothing plays yet: an opaque page is far cheaper to scroll than a see-through one, and the
+    // video window stays hidden so nothing is composited beneath it.
     let _ = webview.set_background_color((11, 12, 13, 255));
     video.set_visible(false);
     window.set_visible(true);
@@ -748,7 +770,10 @@ fn main() {
                 }
             },
             Event::UserEvent(UserEvent::Fullscreen(value)) => {
-                set_fullscreen(&window, value, &mut remaximize);
+                // The small always-on-top window has no full screen: leave picture in picture first.
+                if pip_restore.is_none() {
+                    set_fullscreen(&window, value, &mut remaximize);
+                }
                 report_state = true;
             }
             Event::UserEvent(UserEvent::Probe(label)) => {
@@ -764,19 +789,25 @@ fn main() {
                 );
             }
             Event::UserEvent(UserEvent::Video(on)) => {
-                let _ = webview.set_background_color(if on { (0, 0, 0, 0) } else { (11, 12, 13, 255) });
+                if let Err(e) = webview.set_background_color(if on { (0, 0, 0, 0) } else { (11, 12, 13, 255) }) {
+                    log::warn!("could not switch the page background: {e}");
+                }
                 video.set_visible(on);
+                log::info!("video window {} (window keeps children clear: {})", if on { "shown" } else { "hidden" }, platform::clips_children(window.hwnd()));
             }
             Event::UserEvent(UserEvent::Pip(on)) => {
                 if on && pip_restore.is_none() {
+                    let was_fullscreen = window.fullscreen().is_some();
                     let restore = PipRestore {
                         position: window.outer_position().unwrap_or_default(),
                         size: window.inner_size(),
-                        maximized: window.is_maximized(),
-                        fullscreen: window.fullscreen().is_some(),
+                        // Full screen from a maximized window remembers that in `remaximize`.
+                        maximized: window.is_maximized() || (was_fullscreen && remaximize),
+                        fullscreen: was_fullscreen,
                     };
-                    if restore.fullscreen {
+                    if was_fullscreen {
                         window.set_fullscreen(None);
+                        remaximize = false;
                     }
                     if window.is_maximized() {
                         window.set_maximized(false);
@@ -794,13 +825,20 @@ fn main() {
                 } else if !on && let Some(r) = pip_restore.take() {
                     window.set_always_on_top(false);
                     window.set_min_inner_size(Some(LogicalSize::new(960.0, 600.0)));
-                    window.set_inner_size(r.size);
-                    window.set_outer_position(r.position);
-                    if r.maximized {
-                        window.set_maximized(true);
+                    if r.fullscreen || r.maximized {
+                        // Back to the remembered windowed size first, so leaving full screen or
+                        // un-maximizing later lands there and not on a screen-sized window.
+                        window.set_inner_size(LogicalSize::new(placement.width.max(960.0), placement.height.max(600.0)));
+                        window.set_outer_position(PhysicalPosition::new(placement.x, placement.y));
+                    } else {
+                        window.set_inner_size(r.size);
+                        window.set_outer_position(r.position);
                     }
                     if r.fullscreen {
                         set_fullscreen(&window, Some(true), &mut remaximize);
+                        remaximize = r.maximized;
+                    } else if r.maximized {
+                        window.set_maximized(true);
                     }
                 }
                 report_state = true;

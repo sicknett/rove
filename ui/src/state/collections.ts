@@ -49,12 +49,49 @@ export function folderSources(f: CollectionFolder): CollectionSource[] {
   return (f.catalogSources ?? []).map((c) => ({ provider: 'addon', addonId: c.addonId, type: c.type, catalogId: c.catalogId, genre: c.genre }));
 }
 
-/** Accepts a collection array, `{collections:[…]}`, or a single collection. */
+/** Sources ROVE has a reader for: addon catalogs and TMDB. (Collection files also carry Trakt lists.) */
+export function canShowSource(s: CollectionSource): boolean {
+  const provider = (s.provider ?? 'addon').toLowerCase();
+  return provider === 'tmdb' || (provider === 'addon' && !!s.addonId && !!s.catalogId && !!s.type);
+}
+
+/**
+ * Drops what ROVE cannot show: sources from other providers, then folders that had sources and
+ * are left with none, then collections that had folders and are left with none. A folder or a
+ * collection that was empty to begin with is the user's own work in progress and stays. Returns
+ * the same array when there is nothing to drop, so a caller can tell whether anything changed.
+ */
+export function cleanCollections(list: Collection[]): Collection[] {
+  let changed = false;
+  const out: Collection[] = [];
+  for (const c of list) {
+    const folders: CollectionFolder[] = [];
+    for (const f of c.folders) {
+      const sources = folderSources(f);
+      const kept = sources.filter(canShowSource);
+      if (kept.length === sources.length) folders.push(f);
+      else if (kept.length) folders.push({ ...f, sources: kept, catalogSources: [] });
+    }
+    if (folders.length === c.folders.length && folders.every((f, i) => f === c.folders[i])) out.push(c);
+    else {
+      changed = true;
+      if (folders.length) out.push({ ...c, folders });
+    }
+  }
+  return changed ? out : list;
+}
+
+/**
+ * Accepts a collection array, `{collections:[…]}`, or a single collection, and keeps the parts
+ * ROVE can show (see cleanCollections). Everything imported or seeded comes through here.
+ */
 export function parseCollections(input: unknown): Collection[] {
   const raw = Array.isArray(input) ? input : (input as { collections?: unknown[] })?.collections ?? (input && typeof input === 'object' && 'folders' in (input as object) ? [input] : []);
-  return (raw as Collection[])
-    .filter((c) => c && typeof c.id === 'string' && typeof c.title === 'string')
-    .map((c) => ({ ...c, folders: (c.folders ?? []).filter((f) => f && f.id && f.title) }));
+  return cleanCollections(
+    (raw as Collection[])
+      .filter((c) => c && typeof c.id === 'string' && typeof c.title === 'string')
+      .map((c) => ({ ...c, folders: (c.folders ?? []).filter((f) => f && f.id && f.title) })),
+  );
 }
 
 interface CollectionsState {
@@ -96,7 +133,12 @@ export const useCollections = create<CollectionsState>((set, get) => {
       const name = profileDoc('collections');
       writer = debouncedWriter((v) => docs.write(name, v), 800);
       const doc = await docs.read<{ collections: Collection[] }>(name).catch(() => null);
-      set({ loaded: true, collections: doc?.collections ?? [] });
+      const saved = doc?.collections ?? [];
+      // Collections saved before imports were cleaned came from the same files: the same pass
+      // runs on them. It changes nothing once they are clean, and then nothing is written.
+      const collections = cleanCollections(saved);
+      set({ loaded: true, collections });
+      if (collections !== saved) writer.save({ collections });
     },
     replaceAll: (c) => commit(c),
     merge(c) {

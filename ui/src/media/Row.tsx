@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Skeleton } from '../ui/controls';
+import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { Skeleton, type MenuItem } from '../ui/controls';
+import { openContextMenu, useContextMenu } from '../ui/contextmenu';
 
 /** True once the element has come near the viewport (stays true). */
 export function useNearViewport<T extends Element>(margin = '600px') {
@@ -15,12 +16,29 @@ export function useNearViewport<T extends Element>(margin = '600px') {
           io.disconnect();
         }
       },
-      { rootMargin: margin },
+      // The margin only reaches past the edge of the observer's own root, so the root is the
+      // screen's scroller. With the window as root, the scroller clips first and nothing preloads.
+      { root: ref.current.closest('.screen'), rootMargin: margin },
     );
     io.observe(ref.current);
     return () => io.disconnect();
   }, [near, margin]);
   return [ref, near] as const;
+}
+
+/**
+ * Sits in a row where cards would: a row that did not load (with `children` saying so), or the
+ * end of a row whose next page failed. What is loaded stays; "Try again" asks once more.
+ */
+export function RowRetry({ onRetry, children }: { onRetry: () => void; children?: React.ReactNode }) {
+  return (
+    <div className="row__note">
+      {children}
+      <button className="row__more" onClick={onRetry}>
+        Try again
+      </button>
+    </div>
+  );
 }
 
 interface RowProps {
@@ -33,9 +51,11 @@ interface RowProps {
   /** Called when scrolled near the end, to load more. */
   onNearEnd?: () => void;
   className?: string;
+  /** Row options (move, hide, …): a ⋯ button in the header, and its right-click menu. */
+  menu?: () => (MenuItem | 'divider')[];
 }
 
-export function Row({ title, action, children, shape = 'poster', loading, onNearEnd, className = '' }: RowProps) {
+export function Row({ title, action, children, shape = 'poster', loading, onNearEnd, className = '', menu }: RowProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: false });
 
@@ -65,9 +85,24 @@ export function Row({ title, action, children, shape = 'poster', loading, onNear
 
   return (
     <section className={`row ${className}`} aria-label={title}>
-      <header className="row__head">
+      <header className="row__head" onContextMenu={menu ? (e) => openContextMenu(e, menu()) : undefined}>
         <h2 className="row__title">{title}</h2>
-        {action}
+        <span className="row__tools">
+          {menu && (
+            <button
+              className="row__more row__menu"
+              aria-label={`${title} row options`}
+              title="Row options"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                useContextMenu.getState().show(r.left, r.bottom + 6, menu());
+              }}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+          )}
+          {action}
+        </span>
       </header>
       <div className="row__viewport">
         {!edges.start && (

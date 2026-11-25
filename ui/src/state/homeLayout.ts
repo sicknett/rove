@@ -26,11 +26,12 @@ interface LayoutState extends LayoutDoc {
   loaded: boolean;
   load: () => Promise<void>;
   /** Adds rows that appeared (new addon or collection) at the end, enabled. */
-  ensure: (keys: string[]) => void;
+  ensure: (keys: string[], pinned?: string[]) => void;
   setRow: (key: string, patch: Partial<RowPref>) => void;
   moveRow: (key: string, toIndex: number, visibleKeys: string[]) => void;
   setHeroEnabled: (v: boolean) => void;
-  reset: () => void;
+  /** Back to the default layout for the rows that exist now (`keys` and `pinned` as for `ensure`). */
+  reset: (keys?: string[], pinned?: string[]) => void;
 }
 
 let writer = debouncedWriter((v) => docs.write(profileDoc('home'), v), 500);
@@ -53,19 +54,27 @@ export const useHomeLayout = create<LayoutState>((set, get) => {
       set({ loaded: true, heroEnabled: doc?.heroEnabled ?? true, items: doc?.items ?? [] });
     },
 
-    ensure(keys) {
+    ensure(keys, pinned = []) {
       const known = new Set(get().items.map((i) => i.key));
       const missing = keys.filter((k) => !known.has(k));
       if (!missing.length) return;
-      let order = Math.max(-1, ...get().items.map((i) => i.order)) + 1;
       const heroCount = get().items.filter((i) => i.hero).length;
-      const added = missing.map((key, i) => ({
+      const make = (key: string, i: number): RowPref => ({
         key,
         enabled: true,
-        order: key === CONTINUE_KEY ? -1 : order++,
+        order: 0,
         hero: key !== CONTINUE_KEY && !key.startsWith('collection_') && !key.startsWith('server:') && heroCount + i < 2,
-      }));
-      commit({ items: [...get().items, ...added] });
+      });
+      const added = missing.map(make);
+      const pin = new Set(pinned);
+      // Continue Watching first, then pinned collections, then what was there, then the rest.
+      const ordered = [...get().items].sort((a, b) => a.order - b.order);
+      const cw = added.find((i) => i.key === CONTINUE_KEY);
+      if (cw) ordered.unshift(cw);
+      const top = ordered.findIndex((i) => i.key === CONTINUE_KEY) + 1;
+      ordered.splice(top, 0, ...added.filter((i) => pin.has(i.key)));
+      ordered.push(...added.filter((i) => i.key !== CONTINUE_KEY && !pin.has(i.key)));
+      commit({ items: ordered.map((i, n) => ({ ...i, order: n })) });
     },
 
     setRow(key, patch) {
@@ -87,8 +96,10 @@ export const useHomeLayout = create<LayoutState>((set, get) => {
       commit({ heroEnabled: v });
     },
 
-    reset() {
+    reset(keys = [], pinned = []) {
       commit({ heroEnabled: true, items: [] });
+      // Built again straight away: an emptied layout shows no rows at all until something adds them.
+      get().ensure(keys, pinned);
     },
   };
 });

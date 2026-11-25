@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Copy, ExternalLink, Play, Zap, AlertTriangle, Loader2, Server } from 'lucide-react';
 import { isServerStream } from '../servers';
 import type { SourcedStream } from '../addons/types';
@@ -7,7 +7,7 @@ import { chooseStream, closePicker, usePlayback } from './session';
 import { Button, Sheet, Empty } from '../ui/controls';
 import { navigate } from '../nav/router';
 import { toast } from '../ui/toast';
-import { send } from '../bridge';
+import { mpv, send } from '../bridge';
 import { useSettings } from '../state/settings';
 
 const RES_ORDER = ['4K', '1440p', '1080p', '720p', '480p'];
@@ -19,12 +19,22 @@ export function SourcesSheet() {
   const [addon, setAddon] = useState<string>('all');
   const externalPlayer = useSettings((s) => s.settings.sources.externalPlayer);
 
+  // A filter belongs to the video it was set for: the next title may not have that resolution or addon.
+  const videoId = picker?.target.videoId;
+  useEffect(() => {
+    setRes('all');
+    setAddon('all');
+  }, [videoId]);
+
   const streams = picker?.streams ?? [];
   const playable = useMemo(() => streams.filter(isPlayable), [streams]);
   const withBadges = useMemo(() => playable.map((s) => ({ s, b: badges(s) })), [playable]);
   const resolutions = RES_ORDER.filter((r) => withBadges.some((x) => x.b.resolution === r));
   const addons = [...new Set(playable.map((s) => s.addonName))];
-  const shown = withBadges.filter((x) => (res === 'all' || x.b.resolution === res) && (addon === 'all' || x.s.addonName === addon));
+  // A filter whose chip is not on screen (the list changed under it) must not hide everything.
+  const resOn = resolutions.length > 1 && resolutions.includes(res) ? res : 'all';
+  const addonOn = addons.length > 1 && addons.includes(addon) ? addon : 'all';
+  const shown = withBadges.filter((x) => (resOn === 'all' || x.b.resolution === resOn) && (addonOn === 'all' || x.s.addonName === addonOn));
   const unplayable = streams.length - playable.length;
 
   if (!picker) return null;
@@ -57,7 +67,7 @@ export function SourcesSheet() {
           {resolutions.length > 1 && (
             <div className="chips" role="radiogroup" aria-label="Resolution">
               {['all', ...resolutions].map((r) => (
-                <button key={r} role="radio" aria-checked={res === r} className={`chip chip--sm ${res === r ? 'is-on' : ''}`} onClick={() => setRes(r)}>
+                <button key={r} role="radio" aria-checked={resOn === r} className={`chip chip--sm ${resOn === r ? 'is-on' : ''}`} onClick={() => setRes(r)}>
                   {r === 'all' ? 'All' : r}
                 </button>
               ))}
@@ -66,7 +76,7 @@ export function SourcesSheet() {
           {addons.length > 1 && (
             <div className="chips" role="radiogroup" aria-label="Addon">
               {['all', ...addons].map((a) => (
-                <button key={a} role="radio" aria-checked={addon === a} className={`chip chip--sm ${addon === a ? 'is-on' : ''}`} onClick={() => setAddon(a)}>
+                <button key={a} role="radio" aria-checked={addonOn === a} className={`chip chip--sm ${addonOn === a ? 'is-on' : ''}`} onClick={() => setAddon(a)}>
                   {a === 'all' ? 'Every addon' : a}
                 </button>
               ))}
@@ -117,6 +127,12 @@ function SourceRow({ s, b, externalPlayer }: { s: SourcedStream; b: ReturnType<t
       toast.error('Could not copy the link');
     }
   };
+  const openExternal = () => {
+    // Two players at once would talk over each other.
+    if (usePlayback.getState().session) mpv.set('pause', true);
+    // The shell answers with whether the program started; App shows that.
+    send({ t: 'open-external-player', url: s.url!, player: externalPlayer });
+  };
   return (
     <li className="source">
       <button className="source__main" onClick={() => chooseStream(s)}>
@@ -162,7 +178,7 @@ function SourceRow({ s, b, externalPlayer }: { s: SourcedStream; b: ReturnType<t
           <Copy size={15} />
         </button>
         {externalPlayer && (
-          <button className="ibtn ibtn--sm" aria-label="Open in external player" title="Open in external player" onClick={() => send({ t: 'open-external-player', url: s.url!, player: externalPlayer })}>
+          <button className="ibtn ibtn--sm" aria-label="Open in external player" title="Open in external player" onClick={openExternal}>
             <ExternalLink size={15} />
           </button>
         )}

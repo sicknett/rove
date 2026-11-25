@@ -1,13 +1,13 @@
 // Data for screens, cached with TanStack Query.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useInfiniteQuery, useQueries, useQuery } from '@tanstack/react-query';
-import { fetchCatalog, fetchMeta, findAddon } from '../addons/client';
-import { parseId } from '../addons/ids';
+import { canBrowse, catalogAddon, fetchCatalog, fetchMeta } from '../addons/client';
+import { parseId, titleKey } from '../addons/ids';
 import type { Meta, MetaPreview, Video } from '../addons/types';
 import { useAddons } from '../addons/store';
 import { bestBackdrop, bestLogo, certification, details, resolveTmdb, trailerKey, type TmdbDetails } from '../meta/tmdb';
-import { BUILT_IN_TMDB_KEY, useKeys } from '../state/keys';
+import { BUILT_IN_TMDB_KEY, tmdbKeyId, useKeys } from '../state/keys';
 import { useHistory, type MediaType } from '../state/history';
 import { deriveContinue, type ContinueItem, type EpisodeRef } from '../library/continue';
 import { serverAsAddon } from '../servers';
@@ -46,7 +46,8 @@ export interface Enriched {
 export function useTmdb(type: string, id: string | undefined) {
   const key = useKeys((s) => s.tmdbApiKey ?? BUILT_IN_TMDB_KEY);
   return useQuery({
-    queryKey: ['tmdb', type, id ? parseId(id).base : undefined, !!key],
+    // The key's fingerprint: what one key was refused is asked again once the key changes.
+    queryKey: ['tmdb', type, id ? parseId(id).base : undefined, tmdbKeyId(key)],
     queryFn: async (): Promise<Enriched> => {
       const ref = await resolveTmdb(parseId(id!).base, type);
       if (!ref) return {};
@@ -71,12 +72,17 @@ export function useTmdb(type: string, id: string | undefined) {
 export function useCatalog(addonId: string, type: string, catalogId: string, extra: Record<string, string | undefined> = {}, enabled = true) {
   const fromAddons = useAddons((s) => s.addons.find((a) => a.manifest.id === addonId));
   const server = useServers((s) => (addonId.startsWith('server:') ? s.servers.find((x) => `server:${x.id}` === addonId) : undefined));
-  const addon = useMemo(() => fromAddons ?? (server ? serverAsAddon(server) : undefined), [fromAddons, server]);
+  // Only while its catalogs may be shown: a disabled addon, or one a Kids profile may not use,
+  // loads nothing here either (this is what "See all" and Discover fetch through).
+  const addon = useMemo(() => {
+    const found = fromAddons ?? (server ? serverAsAddon(server) : undefined);
+    return found && canBrowse(found) ? found : undefined;
+  }, [fromAddons, server]);
   return useInfiniteQuery({
     queryKey: ['catalog', addonId, type, catalogId, extra, addon?.url.length],
     initialPageParam: 0,
     queryFn: async ({ pageParam, signal }) => {
-      const a = addon ?? findAddon(addonId);
+      const a = addon ?? catalogAddon(addonId);
       if (!a) return { items: [] as MetaPreview[], skip: pageParam };
       const items = await fetchCatalog(a, { type, id: catalogId }, { ...extra, skip: pageParam || undefined }, signal);
       return { items, skip: pageParam };
@@ -122,6 +128,36 @@ export interface ContinueCard extends ContinueItem {
   logo?: string;
 }
 
+/**
+ * Runs at most `max` tasks at a time; the rest wait their turn. For metadata fetched in the
+ * background (next episodes, card art): a long history would otherwise ask every metadata addon
+ * about a hundred titles at once.
+ */
+function limiter(max: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> => {
+    if (active >= max) await new Promise<void>((go) => waiting.push(go));
+    // Given up on while it waited (the screen closed): let the next one through.
+    if (signal.aborted) {
+      waiting.shift()?.();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    active++;
+    try {
+      return await task();
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
+  };
+}
+
+const inBackground = limiter(4);
+const NO_EPISODES = new Map<string, EpisodeRef[] | null>();
+/** At most this many shows have their next episode worked out, most recently watched first. */
+const NEXT_EPISODE_SHOWS = 60;
+
 /** Continue Watching, with the series metadata it needs fetched (most recent first). */
 export function useContinueWatching(limit = 40): { items: ContinueCard[]; loading: boolean } {
   const progress = useHistory((s) => s.progress);
@@ -130,20 +166,27 @@ export function useContinueWatching(limit = 40): { items: ContinueCard[]; loadin
   const cards = useHistory((s) => s.cards);
   const addonsLoaded = useAddons((s) => s.loaded);
 
-  // Series that need an episode list: everything with watched episodes.
-  const seriesIds = useMemo(() => {
-    const latest = new Map<string, number>();
-    for (const w of Object.values(watched)) if (w.type === 'series') latest.set(w.metaId, Math.max(latest.get(w.metaId) ?? 0, w.at));
-    return [...latest.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => id);
-  }, [watched, limit]);
+  // Series that need an episode list: those whose latest finished episode is their newest
+  // activity (no newer resume point, not removed from the row), most recent first, and only as
+  // many as the row can show. A show finished long ago is not asked about on every start.
+  const seriesKey = useMemo(
+    () => deriveContinue({ progress, watched, dismissed, episodes: NO_EPISODES }).needEpisodes.slice(0, Math.min(limit, NEXT_EPISODE_SHOWS)).join('\n'),
+    [progress, watched, dismissed, limit],
+  );
+  // The same list while its content is the same: positions are saved every few seconds.
+  const seriesIds = useMemo(() => (seriesKey ? seriesKey.split('\n') : []), [seriesKey]);
 
   const metaQueries = useQueries({
     queries: seriesIds.map((id) => ({
       queryKey: ['meta', 'series', id, 'cw'],
-      queryFn: ({ signal }: { signal: AbortSignal }) => fetchMeta('series', id, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) => inBackground(signal, () => fetchMeta('series', id, signal)),
       enabled: addonsLoaded,
       staleTime: 3 * HOUR,
       gcTime: 6 * HOUR,
+      // An addon that did not answer (the network is often not up yet when ROVE starts with
+      // Windows) is asked again while the row is on screen, instead of leaving the show without
+      // its next episode until the next start.
+      refetchInterval: (q: { state: { status: string } }) => (q.state.status === 'error' ? 60 * 1000 : false),
     })),
   });
 
@@ -172,7 +215,7 @@ export function useContinueWatching(limit = 40): { items: ContinueCard[]; loadin
   const items = useMemo(
     () =>
       result.items.slice(0, limit).map((it) => {
-        const c = cards[it.metaId];
+        const c = cards[titleKey(it.metaId, it.type)];
         const p = progress[it.key];
         return { ...it, name: c?.name ?? p?.name, poster: c?.poster ?? p?.poster, background: c?.background ?? p?.background, logo: c?.logo ?? p?.logo };
       }),
@@ -183,23 +226,33 @@ export function useContinueWatching(limit = 40): { items: ContinueCard[]; loadin
   return { items, loading };
 }
 
-/** Movies (and shows) with a resume point but no card art yet: fetch it once. */
+/**
+ * Titles shown without a name or poster: their metadata is fetched and the art remembered in
+ * history's cards (so the caller shows it from there). Works through the whole list a few at a
+ * time: a title that has been answered, with art or without, makes room for the next.
+ */
 export function useCardArt(items: { metaId: string; type: MediaType; name?: string; poster?: string }[]) {
   const addonsLoaded = useAddons((s) => s.loaded);
-  const missing = items.filter((i) => !i.poster || !i.name).slice(0, 30);
+  const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set());
+  const missing = items.filter((i) => (!i.poster || !i.name) && !answered.has(titleKey(i.metaId, i.type))).slice(0, 30);
   const queries = useQueries({
     queries: missing.map((i) => ({
       queryKey: ['meta', i.type, i.metaId, 'art'],
-      queryFn: ({ signal }: { signal: AbortSignal }) => fetchMeta(i.type, i.metaId, signal),
+      queryFn: ({ signal }: { signal: AbortSignal }) => inBackground(signal, () => fetchMeta(i.type, i.metaId, signal)),
       enabled: addonsLoaded,
       staleTime: 12 * HOUR,
     })),
   });
   useEffect(() => {
+    const done: string[] = [];
     missing.forEach((i, idx) => {
-      const m = queries[idx]?.data;
+      const q = queries[idx];
+      if (!q || !(q.isSuccess || q.isError)) return;
+      const m = q.data;
       if (m) useHistory.getState().rememberCard(i.metaId, i.type, { name: m.name, poster: m.poster, background: m.background, logo: m.logo, year: m.releaseInfo });
+      done.push(titleKey(i.metaId, i.type));
     });
+    if (done.length) setAnswered((prev) => new Set([...prev, ...done]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queries.map((q) => q.dataUpdatedAt).join(',')]);
+  }, [queries.map((q) => `${q.dataUpdatedAt}:${q.errorUpdatedAt}`).join(',')]);
 }

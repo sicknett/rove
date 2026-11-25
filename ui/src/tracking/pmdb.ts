@@ -170,6 +170,23 @@ const parse = <T>(text: string, fallback: T): T => {
   }
 };
 
+/**
+ * A page of the user's history. Anything but a JSON object with an `items` list is a failed
+ * request (a gateway's error page, a cut-off body): reading it as "no items" would make the
+ * sync believe the history was deleted.
+ */
+function parsePage<T>(text: string): PmdbPage<T> {
+  let page: unknown;
+  try {
+    page = JSON.parse(text);
+  } catch {
+    throw new PmdbError(502, 'not JSON');
+  }
+  const items = Array.isArray(page) ? page : (page as PmdbPage<T> | null)?.items;
+  if (!Array.isArray(items)) throw new PmdbError(502, 'no item list');
+  return Array.isArray(page) ? { items } : { ...(page as PmdbPage<T>), items };
+}
+
 export const pmdb = {
   async validate(apiKey: string): Promise<boolean> {
     try {
@@ -182,11 +199,11 @@ export const pmdb = {
   },
 
   async resumePage(apiKey: string, page: number, perPage = 100) {
-    return parse<PmdbPage<PmdbResume>>(await request(apiKey, 'GET', '/resume', { page, perPage }), { items: [] });
+    return parsePage<PmdbResume>(await request(apiKey, 'GET', '/resume', { page, perPage }));
   },
 
   async watchedPage(apiKey: string, page: number, perPage = 100) {
-    return parse<PmdbPage<PmdbWatched>>(await request(apiKey, 'GET', '/watched', { page, perPage }), { items: [] });
+    return parsePage<PmdbWatched>(await request(apiKey, 'GET', '/watched', { page, perPage }));
   },
 
   async saveResume(apiKey: string, t: PmdbTarget, positionMs: number, runtimeMs: number) {
@@ -229,19 +246,21 @@ export const pmdb = {
   },
 
   async lists(apiKey: string): Promise<PmdbList[]> {
-    const res = parse<{ lists?: PmdbList[]; items?: PmdbList[] } | PmdbList[]>(await request(apiKey, 'GET', '/lists', { page: 1, perPage: 100 }), {});
-    return Array.isArray(res) ? res : res.lists ?? res.items ?? [];
+    const res = parse<{ lists?: PmdbList[]; items?: PmdbList[] } | PmdbList[] | null>(await request(apiKey, 'GET', '/lists', { page: 1, perPage: 100 }), null);
+    const lists = Array.isArray(res) ? res : res?.lists ?? res?.items;
+    if (!Array.isArray(lists)) throw new PmdbError(502, 'no lists');
+    return lists;
   },
 
+  /** Every item of a list. Throws rather than return part of it. */
   async listItems(apiKey: string, listId: string): Promise<PmdbListItem[]> {
     const out: PmdbListItem[] = [];
     for (let page = 1; page <= 20; page++) {
-      const res = parse<{ items?: PmdbListItem[] } | PmdbListItem[]>(await request(apiKey, 'GET', `/lists/${encodeURIComponent(listId)}/items`, { page, perPage: 500 }), {});
-      const items = Array.isArray(res) ? res : res.items ?? [];
+      const { items } = parsePage<PmdbListItem>(await request(apiKey, 'GET', `/lists/${encodeURIComponent(listId)}/items`, { page, perPage: 500 }));
       out.push(...items);
-      if (items.length < 500) break;
+      if (items.length < 500) return out;
     }
-    return out;
+    throw new PmdbError(502, 'list too long');
   },
 
   async addListItem(apiKey: string, listId: string, tmdbId: number, mediaType: 'movie' | 'tv') {

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Eye, EyeOff, X } from 'lucide-react';
+import { WindowButtons } from '../components/TitleBar';
 
 // ---------- Buttons ----------
 
@@ -132,7 +133,7 @@ export function Slider({ value, min, max, step = 1, onChange, label, format }: {
 
 // ---------- Popover positioning ----------
 
-function usePopoverPosition(anchor: React.RefObject<HTMLElement | null>, open: boolean, align: 'start' | 'end' = 'start') {
+function usePopoverPosition(anchor: React.RefObject<HTMLElement | null>, open: boolean, align: 'start' | 'end' = 'start', popover?: React.RefObject<HTMLElement | null>) {
   const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number; above: boolean; minWidth: number } | null>(null);
   useLayoutEffect(() => {
     if (!open || !anchor.current) return;
@@ -149,15 +150,39 @@ function usePopoverPosition(anchor: React.RefObject<HTMLElement | null>, open: b
         minWidth: r.width,
       });
     };
+    // Scrolling the list itself moves nothing it is anchored to.
+    const onScroll = (e: Event) => {
+      if (!(e.target instanceof Node && popover?.current?.contains(e.target))) place();
+    };
     place();
     window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('scroll', onScroll, true);
     };
-  }, [open, anchor, align]);
+  }, [open, anchor, align, popover]);
   return pos;
+}
+
+/**
+ * Moves the keyboard into a popover once, when it appears. Not on every reposition: focusing
+ * scrolls the item into view, which would pull a long list back while it is being scrolled.
+ */
+function useFocusOnOpen(open: boolean, shown: boolean, popover: React.RefObject<HTMLElement | null>, selectors: string[]) {
+  const done = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      done.current = false;
+      return;
+    }
+    if (done.current || !shown || !popover.current) return;
+    done.current = true;
+    for (const selector of selectors) {
+      const el = popover.current.querySelector<HTMLElement>(selector);
+      if (el) return el.focus();
+    }
+  }, [open, shown, popover, selectors]);
 }
 
 function useDismiss(open: boolean, close: () => void, refs: React.RefObject<HTMLElement | null>[]) {
@@ -184,17 +209,18 @@ function useDismiss(open: boolean, close: () => void, refs: React.RefObject<HTML
 
 // ---------- Select ----------
 
+/** What takes the keyboard when a list opens: the chosen option, else the first. */
+const SELECT_FOCUS = ['[aria-selected="true"]', '[role="option"]'];
+const MENU_FOCUS = ['[role="menuitem"]:not(:disabled)'];
+
 export function Select<T extends string | number>({ value, options, onChange, label, className = '' }: { value: T; options: { value: T; label: string; detail?: string }[]; onChange: (v: T) => void; label: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const pop = useRef<HTMLDivElement>(null);
-  const pos = usePopoverPosition(anchor, open);
+  const pos = usePopoverPosition(anchor, open, 'start', pop);
   useDismiss(open, () => setOpen(false), [anchor, pop]);
   const current = options.find((o) => o.value === value);
-
-  useEffect(() => {
-    if (open) pop.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
-  }, [open, pos]);
+  useFocusOnOpen(open, !!pos, pop, SELECT_FOCUS);
 
   const onListKey = (e: React.KeyboardEvent) => {
     const items = [...(pop.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
@@ -265,11 +291,9 @@ export function Menu({ trigger, items, align = 'end' }: { trigger: (props: { ref
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   const pop = useRef<HTMLDivElement>(null);
-  const pos = usePopoverPosition(anchor, open, align);
+  const pos = usePopoverPosition(anchor, open, align, pop);
   useDismiss(open, () => setOpen(false), [anchor, pop]);
-  useEffect(() => {
-    if (open) pop.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
-  }, [open, pos]);
+  useFocusOnOpen(open, !!pos, pop, MENU_FOCUS);
   return (
     <>
       {trigger({ ref: anchor, onClick: () => setOpen((v) => !v), 'aria-expanded': open })}
@@ -356,20 +380,30 @@ function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean)
   }, [ref, active]);
 }
 
-export function Dialog({ open, onClose, title, children, footer, width = 520, dismissable = true }: { open: boolean; onClose: () => void; title?: string; children: React.ReactNode; footer?: React.ReactNode; width?: number; dismissable?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useFocusTrap(ref, open);
+/**
+ * Escape closes a dialog or sheet, unless something on top of it takes the key first: an open
+ * dropdown or menu (that closes instead, and the dialog keeps its unsaved edits), or a dialog
+ * opened over this one.
+ */
+function useEscape(ref: React.RefObject<HTMLElement | null>, active: boolean, onClose: () => void) {
   useEffect(() => {
-    if (!open || !dismissable) return;
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== 'Escape' || document.querySelector('.popover')) return;
+      const overlays = document.querySelectorAll('.overlay');
+      if (overlays[overlays.length - 1] !== ref.current?.parentElement) return;
+      e.stopPropagation();
+      onClose();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose, dismissable]);
+  }, [ref, active, onClose]);
+}
+
+export function Dialog({ open, onClose, title, children, footer, width = 520, dismissable = true }: { open: boolean; onClose: () => void; title?: string; children: React.ReactNode; footer?: React.ReactNode; width?: number; dismissable?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useFocusTrap(ref, open);
+  useEscape(ref, open && dismissable, onClose);
   if (!open) return null;
   return createPortal(
     <div className="overlay" onPointerDown={(e) => dismissable && e.target === e.currentTarget && onClose()}>
@@ -387,6 +421,7 @@ export function Dialog({ open, onClose, title, children, footer, width = 520, di
         <div className="dialog__body">{children}</div>
         {footer && <footer className="dialog__foot">{footer}</footer>}
       </div>
+      <WindowButtons />
     </div>,
     document.body,
   );
@@ -395,17 +430,7 @@ export function Dialog({ open, onClose, title, children, footer, width = 520, di
 export function Sheet({ open, onClose, title, subtitle, children, width = 560 }: { open: boolean; onClose: () => void; title: string; subtitle?: React.ReactNode; children: React.ReactNode; width?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useFocusTrap(ref, open);
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose]);
+  useEscape(ref, open, onClose);
   if (!open) return null;
   return createPortal(
     <div className="overlay overlay--sheet" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -421,6 +446,7 @@ export function Sheet({ open, onClose, title, subtitle, children, width = 560 }:
         </header>
         <div className="sheet__body">{children}</div>
       </aside>
+      <WindowButtons />
     </div>,
     document.body,
   );

@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ExternalLink, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { addonHost, useAddons } from '../../addons/store';
+import { AddonConflict, addonHost, ADDONS_UNREADABLE, useAddons } from '../../addons/store';
 import { provides, type Resource } from '../../addons/client';
 import type { InstalledAddon } from '../../addons/types';
-import { Button, IconButton, Switch, TextField } from '../../ui/controls';
+import { Button, Dialog, IconButton, Switch, TextField } from '../../ui/controls';
 import { Img } from '../../ui/Img';
 import { toast } from '../../ui/toast';
 import { send } from '../../bridge';
-import { Group } from './parts';
+import { Group, SettingRow } from './parts';
 
 const RESOURCES: { id: Resource; label: string }[] = [
   { id: 'catalog', label: 'Catalogs' },
@@ -16,34 +16,95 @@ const RESOURCES: { id: Resource; label: string }[] = [
   { id: 'subtitles', label: 'Subtitles' },
 ];
 
-export function AddonsSection() {
-  const addons = useAddons((s) => s.addons);
-  const { add, refreshManifests } = useAddons.getState();
-  const [link, setLink] = useState('');
+/**
+ * Installing from a pasted link, for Settings and first-run setup. One install at a time (Enter
+ * held or pressed twice is one install), and a link for an addon that is already installed under
+ * another configuration is put to the user as a replacement (see ReplaceAddonDialog).
+ */
+export function useAddonInstall(onInstalled?: () => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [conflict, setConflict] = useState<{ link: string; found: AddonConflict } | null>(null);
+  const running = useRef(false);
 
-  const submit = async () => {
+  const install = async (link: string, replace = false) => {
+    if (running.current || !link.trim()) return;
+    running.current = true;
     setBusy(true);
     setError(null);
     try {
-      const a = await add(link);
-      setLink('');
-      toast.success(`${a.manifest.name} installed`);
+      const a = await useAddons.getState().add(link, { replace });
+      setConflict(null);
+      toast.success(replace ? `${a.manifest.name} replaced` : `${a.manifest.name} installed`);
+      onInstalled?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'That addon could not be added.');
+      if (e instanceof AddonConflict) setConflict({ link, found: e });
+      else {
+        setConflict(null);
+        setError(e instanceof Error ? e.message : 'That addon could not be added.');
+      }
     } finally {
+      running.current = false;
       setBusy(false);
     }
   };
+
+  return { busy, error, conflict, install, replace: () => conflict && install(conflict.link, true), cancel: () => setConflict(null) };
+}
+
+/** Asks before a link takes the place of the installed addon it is another configuration of. */
+export function ReplaceAddonDialog({ state }: { state: ReturnType<typeof useAddonInstall> }) {
+  const existing = state.conflict?.found.existing;
+  return (
+    <Dialog
+      open={!!existing}
+      onClose={state.cancel}
+      title={existing ? `Replace ${existing.manifest.name}?` : undefined}
+      width={460}
+      footer={
+        <>
+          <Button variant="ghost" onClick={state.cancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" busy={state.busy} onClick={() => void state.replace()}>
+            Replace
+          </Button>
+        </>
+      }
+    >
+      <p className="dialog__text">
+        This link is {existing?.manifest.name} again, set up differently from the one installed ({existing ? addonHost(existing.url) : ''}). ROVE keeps one of them. Replacing keeps its place in the list and its switches.
+      </p>
+    </Dialog>
+  );
+}
+
+export function AddonsSection() {
+  const addons = useAddons((s) => s.addons);
+  const unreadable = useAddons((s) => s.loadFailed);
+  const { refreshManifests, load } = useAddons.getState();
+  const [link, setLink] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const adding = useAddonInstall(() => setLink(''));
+
+  // The saved list is there but could not be read: nothing can be added or changed until it can.
+  if (unreadable)
+    return (
+      <Group title="Addons">
+        <SettingRow label="Your addons could not be loaded" hint={ADDONS_UNREADABLE}>
+          <Button variant="primary" onClick={() => void load()}>
+            Try again
+          </Button>
+        </SettingRow>
+      </Group>
+    );
 
   return (
     <>
       <Group title="Add an addon" note="Paste the manifest link from the addon's configure page (it ends in /manifest.json). Links can carry your configuration, so they are stored encrypted.">
         <div className="inline-form inline-form--pad">
-          <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" error={error} onKeyDown={(e) => e.key === 'Enter' && link.trim() && void submit()} />
-          <Button variant="primary" icon={<Plus size={16} />} busy={busy} disabled={!link.trim()} onClick={() => void submit()}>
+          <TextField value={link} onChange={setLink} placeholder="https://…/manifest.json" error={adding.error} onKeyDown={(e) => e.key === 'Enter' && void adding.install(link)} />
+          <Button variant="primary" icon={<Plus size={16} />} busy={adding.busy} disabled={!link.trim()} onClick={() => void adding.install(link)}>
             Install
           </Button>
         </div>
@@ -57,11 +118,16 @@ export function AddonsSection() {
             variant="ghost"
             size="sm"
             icon={<RefreshCw size={15} className={refreshing ? 'spin' : ''} />}
+            disabled={refreshing}
             onClick={async () => {
               setRefreshing(true);
-              await refreshManifests();
-              setRefreshing(false);
-              toast.success('Addons refreshed');
+              try {
+                const { failed } = await refreshManifests();
+                if (!failed.length) toast.success('Addons refreshed');
+                else toast.error(`${failed.join(', ')} did not answer. ${failed.length < addons.length ? 'The others were refreshed.' : 'Nothing was refreshed.'}`);
+              } finally {
+                setRefreshing(false);
+              }
             }}
           >
             Refresh all
@@ -72,12 +138,13 @@ export function AddonsSection() {
         ))}
         {!addons.length && <p className="s-empty">No addons yet. Add a metadata addon (such as AIOMetadata or Cinemeta) and a stream addon (such as AIOStreams) above.</p>}
       </Group>
+      <ReplaceAddonDialog state={adding} />
     </>
   );
 }
 
 function AddonRow({ addon, index, count }: { addon: InstalledAddon; index: number; count: number }) {
-  const { setEnabled, move, remove, toggleResource, add } = useAddons.getState();
+  const { setEnabled, move, remove, toggleResource, restore } = useAddons.getState();
   const m = addon.manifest;
   const configurable = m.behaviorHints?.configurable;
   return (
@@ -119,7 +186,13 @@ function AddonRow({ addon, index, count }: { addon: InstalledAddon; index: numbe
           size="sm"
           onClick={() => {
             remove(addon.url);
-            toast.info(`${m.name} removed`, { label: 'Undo', run: () => void add(addon.url).catch(() => toast.error('Could not reinstall it')) });
+            // Undo puts back the addon as it was, where it was: no request, so it works offline too.
+            toast.info(`${m.name} removed`, {
+              label: 'Undo',
+              run: () => {
+                if (!restore(addon, index)) toast.error(`${m.name} is installed again already`);
+              },
+            });
           }}
         >
           <Trash2 size={16} />
