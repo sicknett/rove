@@ -112,6 +112,26 @@ you entered) and list imports (requests to Trakt, MDBList or your server). Detai
 - This product uses the Trakt API but is not endorsed or certified by Trakt.
 - Skip times come from TheIntroDB, IntroDB, PublicMetaDB and AniSkip community data.
 
+## Code signing policy
+
+Releases are built from this repository by the workflow in `.github/workflows/build.yml` on
+GitHub-hosted machines; nothing built anywhere else is signed. The bundled player library
+(`libmpv-2.dll`) is an unmodified upstream build of [mpv](https://mpv.io/), fetched by a pinned
+hash.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org). *(Applied for; releases are unsigned until it is
+granted.)*
+
+Team roles:
+
+- Committers and reviewers: [sicknett](https://github.com/sicknett)
+- Approvers (each release's signing request): [sicknett](https://github.com/sicknett)
+
+Privacy: ROVE has no server of its own and collects nothing. It contacts only the services you
+add or switch on, and each of those can be switched off in Settings; the details are in
+[PRIVACY.md](PRIVACY.md).
+
 ## Licence
 
 ROVE is free software under the [GNU General Public License v3.0](LICENSE) or later.
