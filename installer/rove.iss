@@ -38,6 +38,7 @@ SolidCompression=yes
 LZMANumBlockThreads=4
 ; A running ROVE is handled in [Code] (the app holds the RoveDesktopRunning mutex while open):
 ; an update started by the app itself waits for it to finish closing instead of giving up.
+; That update is not a silent install: Setup shows its progress window and nothing else.
 CloseApplications=yes
 RestartApplications=no
 
@@ -61,7 +62,7 @@ Name: "{userprograms}\ROVE"; Filename: "{app}\rove.exe"; WorkingDir: "{app}"
 Name: "{userdesktop}\ROVE"; Filename: "{app}\rove.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\rove.exe"; Description: "Open ROVE"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\rove.exe"; Description: "Open ROVE"; Flags: nowait postinstall skipifsilent; Check: not IsSelfUpdate
 ; An update the app started for itself: open ROVE again when the files are in place.
 Filename: "{app}\rove.exe"; Flags: nowait; Check: IsSelfUpdate
 
@@ -116,6 +117,21 @@ begin
   end;
 end;
 
+{ An update the app started (the UPDATE marker, see shell\src\update.rs) asks nothing: every
+  page is skipped, so Setup goes straight to installing, shows its progress, and finishes. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := IsSelfUpdate;
+end;
+
+{ Setup always stops at "Ready to Install" when no page came before it, and at "Finished".
+  In an update started by the app those are pressed for the user. }
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if IsSelfUpdate and ((CurPageID = wpReady) or (CurPageID = wpFinished)) then
+    PostMessage(WizardForm.NextButton.Handle, $00F5, 0, 0);
+end;
+
 function InitializeUninstall: Boolean;
 begin
   Result := True;
@@ -131,14 +147,6 @@ function InitializeSetup: Boolean;
 var
   Code: Integer;
 begin
-  { An update the app started arrives with only the UPDATE marker (see shell\src\update.rs for
-    why). It starts itself again without the wizard and steps aside. }
-  if IsSelfUpdate and not WizardSilent then
-  begin
-    Exec(ExpandConstant('{srcexe}'), '/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE=1', '', SW_SHOW, ewNoWait, Code);
-    Result := False;
-    Exit;
-  end;
   Result := RoveClosed;
   if not Result then
     Exit;

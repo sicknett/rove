@@ -159,11 +159,13 @@ pub fn ready() -> Option<PathBuf> {
 }
 
 /// Starts the Setup as the app leaves. It waits for this copy to be gone, installs over it without
-/// questions, and opens ROVE again (see `installer\rove.iss`, the UPDATE parameter).
+/// questions (showing only its progress), and opens ROVE again (see `installer\rove.iss`, the
+/// UPDATE parameter).
 ///
-/// Only the update marker is passed: Setup turns itself quiet. An unsigned program that starts an
-/// installer with "silent" switches reads as a dropper to Windows Defender's machine-learning
-/// check, which then blocks ROVE itself (seen on 2026-11-25, Trojan:Win32/Bearfoos.A!ml).
+/// Only the update marker is passed, and the install is deliberately not a silent one. An unsigned
+/// program that starts an installer with "silent" switches reads as a dropper to Windows
+/// Defender's machine-learning check, which then blocks ROVE itself (seen on 2026-11-25,
+/// Trojan:Win32/Bearfoos.A!ml).
 pub fn run_setup(setup: &Path) {
     match std::process::Command::new(setup).arg("/UPDATE=1").spawn() {
         Ok(_) => log::info!("update: Setup started"),
